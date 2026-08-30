@@ -1,0 +1,211 @@
+blueprint:
+  name: OpenIPC Door Opening Video Recording
+  description: >-
+    Records a short clip when a door opens, sets camera OSD text, announces the
+    event on the camera speaker, and optionally sends the resulting video to Telegram.
+  domain: automation
+  source_url: https://github.com/sebfrie/hass/blob/main/blueprints/automation/openipc/door_recording.yaml
+
+  input:
+    door_sensor:
+      name: Door sensor
+      description: Door binary sensor that triggers recording.
+      selector:
+        entity:
+          domain: binary_sensor
+          device_class: door
+
+    camera_entity:
+      name: Camera
+      description: OpenIPC camera entity to record.
+      selector:
+        entity:
+          integration: openipc
+          domain: camera
+
+    media_player:
+      name: Camera speaker
+      description: OpenIPC media player entity that plays TTS audio.
+      selector:
+        entity:
+          integration: openipc
+          domain: media_player
+
+    tts_provider:
+      name: TTS provider
+      description: TTS provider to use for announcements.
+      default: google
+      selector:
+        select:
+          options:
+            - google
+            - rhvoice
+
+    recording_duration:
+      name: Recording duration
+      description: How long to record after the door opens.
+      default: 30
+      selector:
+        number:
+          min: 10
+          max: 600
+          unit_of_measurement: seconds
+          mode: box
+
+    telegram_enabled:
+      name: Send video to Telegram
+      description: Send the captured video file to Telegram.
+      default: false
+      selector:
+        boolean:
+
+    notification_text:
+      name: Notification text
+      description: TTS text spoken after the door opens.
+      default: Door open, starting recording
+      selector:
+        text:
+
+    done_text:
+      name: Completion text
+      description: TTS text spoken when recording is complete.
+      default: Recording complete
+      selector:
+        text:
+
+    osd_region_1:
+      name: OSD region 1 text
+      description: Primary OSD message for door-open events.
+      default: "🚪 ДВЕРЬ ОТКРЫТА $t"
+      selector:
+        text:
+
+    osd_region_2:
+      name: OSD region 2 text
+      description: Secondary OSD message during recording.
+      default: "⏺️ ЗАПИСЬ"
+      selector:
+        text:
+
+    osd_region_3:
+      name: OSD region 3 text
+      description: Time display while recording is active.
+      default: "$t"
+      selector:
+        text:
+
+mode: single
+max: 10
+
+trigger:
+  - platform: state
+    entity_id: !input door_sensor
+    to: "on"
+    for:
+      milliseconds: 0
+
+condition: []
+
+action:
+  - alias: Clear previous OSD overlays
+    service: openipc.osd_clear
+    target:
+      entity_id: !input camera_entity
+    data:
+      region: 1
+
+  - alias: Prepare OSD region 1
+    service: openipc.osd_set_text
+    target:
+      entity_id: !input camera_entity
+    data:
+      region: 1
+      text: !input osd_region_1
+      font: UbuntuMono-Regular
+      size: 48
+      color: "#ff0000"
+      opacity: 255
+      save: true
+
+  - alias: Prepare OSD region 2
+    service: openipc.osd_set_text
+    target:
+      entity_id: !input camera_entity
+    data:
+      region: 2
+      text: !input osd_region_2
+      font: UbuntuMono-Regular
+      size: 36
+      color: "#ffcc00"
+      opacity: 255
+      save: true
+
+  - alias: Prepare OSD region 3
+    service: openipc.osd_set_text
+    target:
+      entity_id: !input camera_entity
+    data:
+      region: 3
+      text: !input osd_region_3
+      font: UbuntuMono-Regular
+      size: 32
+      color: "#00ff00"
+      opacity: 255
+      save: true
+
+  - alias: Speak door-open announcement
+    service: media_player.play_media
+    target:
+      entity_id: !input media_player
+    data:
+      media_content_type: tts
+      media_content_id: !input notification_text
+      extra:
+        provider: !input tts_provider
+
+  - alias: Record video with OSD overlay
+    service: openipc.record_with_osd
+    target:
+      entity_id: !input camera_entity
+    data:
+      duration: !input recording_duration
+      template: door_open
+      position: top_left
+      font_size: 32
+      color: white
+      send_telegram: !input telegram_enabled
+
+  - alias: End-of-recording announcement
+    delay:
+      seconds: !input recording_duration
+
+  - alias: Announce recording complete
+    service: media_player.play_media
+    target:
+      entity_id: !input media_player
+    data:
+      media_content_type: tts
+      media_content_id: !input done_text
+      extra:
+        provider: !input tts_provider
+
+  - alias: Clear OSD after recording
+    service: openipc.osd_clear
+    target:
+      entity_id: !input camera_entity
+    data:
+      region: 1
+
+  - alias: Clear OSD region 2
+    service: openipc.osd_clear
+    target:
+      entity_id: !input camera_entity
+    data:
+      region: 2
+
+  - alias: Clear OSD region 3
+    service: openipc.osd_clear
+    target:
+      entity_id: !input camera_entity
+    data:
+      region: 3
