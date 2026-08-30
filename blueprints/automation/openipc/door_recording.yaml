@@ -95,14 +95,11 @@ blueprint:
         text:
 
 mode: single
-max: 10
 
 trigger:
   - platform: state
     entity_id: !input door_sensor
     to: "on"
-    for:
-      milliseconds: 0
 
 condition: []
 
@@ -175,10 +172,6 @@ action:
       color: white
       send_telegram: !input telegram_enabled
 
-  - alias: End-of-recording announcement
-    delay:
-      seconds: !input recording_duration
-
   - alias: Announce recording complete
     service: media_player.play_media
     target:
@@ -189,7 +182,7 @@ action:
       extra:
         provider: !input tts_provider
 
-  - alias: Clear OSD after recording
+  - alias: Clear OSD region 1 after recording
     service: openipc.osd_clear
     target:
       entity_id: !input camera_entity
