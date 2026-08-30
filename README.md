@@ -1,7 +1,9 @@
 
-### OpenIPC Ecosystem for Home Assistant
+# OpenIPC Camera for Home Assistant 🚀
 
-Integration for managing OpenIPC, Beward, and Vivotek cameras in Home Assistant with a powerful web interface for advanced features.
+Integration for managing OpenIPC, Beward, and Vivotek cameras in Home Assistant, with a powerful web interface (OpenIPC Bridge addon) for advanced features.
+
+---
 
 ## ✨ Features
 
@@ -15,262 +17,133 @@ Integration for managing OpenIPC, Beward, and Vivotek cameras in Home Assistant 
 - CPU temperature, FPS, bitrate
 - SD card status, network statistics
 - License plate recognition (LNPR) for Beward
+- Smart `majestic` process monitoring with auto-restart via SSH after 3 failed health checks
 
 ### 🔊 Text-to-Speech (TTS)
-- **Google TTS** - cloud-based speech synthesis
-- **RHVoice** - local synthesis (Anna voice) via separate addon
+- **Google TTS** — cloud-based, 30+ languages, high quality
+- **RHVoice** — local, offline, "Anna" voice (requires separate addon)
 - Support for Beward (A-law) and OpenIPC (PCM)
 
 ### 📱 Notifications
 - Send photos and videos to Telegram
-- Visual notification builder
+- Daily Telegram reports on camera health at 9:00 PM
 
-### ➕ NEW (March 2026)
+### 🖥️ OpenIPC Bridge Addon Web UI
+- Camera management interface with import from HA integration
+- Visual OSD editor (drag-and-drop regions, real-time preview, templates, BMP logo support)
+- QR code scanner & generator with scan history, CSV export, and Telegram send
+- TTS provider selection (Google / RHVoice)
+- Recording archive with filters, built-in video player, and timeline with event marks
+- Snapshot management with modal viewer, download, and Telegram send
 
-#### 🖥️ **OpenIPC Bridge Addon** with Web UI
-- Camera management through beautiful interface
-- Import cameras from OpenIPC integration
-- OSD configuration with drag-and-drop preview
-- QR code generator with Telegram integration
-- TTS provider selection (Google/RHVoice)
+---
 
-#### 🎨 **Visual OSD Editor**
-- Drag-and-drop regions with mouse
-- Real-time preview
-- Save and load templates
-- Logo support (BMP)
+## 🆕 What's New (March 2026)
 
-#### 📸 **QR Scanner & Generator**
-- Continuous QR code scanning
-- Customizable QR code generation
-- Scan history with CSV export
-- Send QR codes to Telegram
+### 🎥 New Recording System
+- Configure recording quality (`high`/`medium`/`low`), FPS (5–30), and segment duration (1 min – 1 hr) per camera
+- Limit on simultaneous recordings (default 5) to prevent system overload, configurable in the UI
+- Automatic cleanup of old recordings based on configured archive depth (days)
 
-#### 🔄 **Universal Blueprint**
-- Video recording on door opening
-- Dynamic OSD with ticking clock
-- TTS provider selection
-- Telegram integration
+### 🔔 Notifications
+- Centralized Telegram settings (token, chat ID, video quality) on a dedicated Notifications page
+- Send snapshots directly from the archive player, with optional video compression
+
+### ⚙️ UI Improvements
+- New System tab in camera settings to manage simultaneous recording limits and view statistics
+- Absolute timestamps on the archive video timeline
+
+---
+
+## 🚧 Future Plans
+
+- **Advanced Object Detection:** AI-based detection of people, vehicles, and other objects
+- **License Plate Recognition (LPR):** Current LPR sensors are placeholders; full support planned
 
 ---
 
 ## 📦 Installation
 
-### 1. OpenIPC Bridge Addon (Required for new features)
+### 1. OpenIPC Bridge Addon (required for advanced features)
 
-```bash
-# Add the repository to Supervisor:
-# Settings → Add-ons → Add-on Store → ⋮ → Repositories
-# Add: https://github.com/OpenIPC/hass
+1. Go to **Settings → Add-ons → Add-on Store**
+2. Click ⋮ (top right) → **Repositories**
+3. Add: `https://github.com/sebfrie/hass`
+4. Find and install **OpenIPC Bridge**
+5. The addon web UI will be available at `http://[YOUR-HA-IP]:5000`
 
-After installation, the addon will be available at http://[YOUR-HA-IP]:5000
+### 2. OpenIPC Camera Integration
 
-2. OpenIPC Integration
-Via HACS (recommended)
-Open HACS → Integrations → ⋮ → Custom repositories
+**Via HACS (recommended):**
+1. Open HACS → Integrations → ⋮ → Custom repositories
+2. Add `https://github.com/sebfrie/hass` with category **Integration**
+3. Find **OpenIPC Camera** and install
+4. Restart Home Assistant
 
-Add https://github.com/OpenIPC/hass with category Integration
+**Manual:**
+Copy the `custom_components/openipc` folder to `/config/custom_components/` and restart HA.
 
-Find "OpenIPC Camera" and install
+---
 
-Restart HA
+## 🎮 Using the Addon Web Interface
 
-Manual
-Copy the custom_components/openipc folder to /config/custom_components/ and restart HA.
+Open `http://[YOUR-HA-IP]:5000` after installation.
 
+### 📹 Cameras Tab
+- **Import from HA** — click "Import cameras from HA" to pull all cameras from the OpenIPC integration automatically
+- **Manual add** — fill in name, IP address, type (OpenIPC / Beward / Vivotek), and credentials
 
-🎮 Using the Addon Web Interface
-After installation, open http://[YOUR-HA-IP]:5000. You'll see the main dashboard.
+### 🖥️ OSD Tab (On-Screen Display)
+1. Select a camera
+2. Configure up to 4 regions (Region 0 = logo/BMP, Regions 1–3 = text)
+3. Drag regions to position; appearance options: color, font size (8–72 px), font, opacity (0–255)
+4. Supported variables: `$t` (time), `$B` (bitrate), `$C` (frame counter), `$M` (memory)
+5. Save and load templates
 
-📹 "Cameras" Tab
-Import from Home Assistant
-Click "Import cameras from HA" - the addon will automatically pull all cameras from the OpenIPC integration with correct settings based on type:
+### 📸 QR Scanner & Generator Tab
+- **Scanner:** select camera → optional expected code → Start scanning → fires `openipc_qr_detected` event in HA
+- **Generator:** enter text/URL → adjust size, colors, error correction → Generate → save or send to Telegram
+- **History:** all scans saved with CSV export and clipboard copy
 
-🟦 OpenIPC - standard IP cameras
+### 🔊 TTS Tab
+1. Select camera → choose provider (Google TTS / RHVoice) → select language → enter text → Test
+2. Debug audio files saved to `/config/www/tts_debug_*.pcm`
 
-🟩 Beward - doorbells with relays
+---
 
-🟨 Vivotek - PTZ cameras
+## 🤖 Blueprints
 
-Manual Addition
-If you need to add a camera manually, fill out the form:
+### Blueprint 1: QR Scanner
 
-Name - friendly name
+```
+https://github.com/sebfrie/hass/blob/main/blueprints/automation/openipc/qr_scanner.yaml
+```
 
-IP Address - e.g., 192.168.1.4
+Starts scanning on button press, validates the code, and can trigger TTS notification, relay control, and Telegram notification.
 
-Type - OpenIPC/Beward/Vivotek
+### Blueprint 2: Door Opening Video Recording
 
-Username/Password - access credentials
+```
+https://github.com/sebfrie/hass/blob/main/blueprints/automation/openipc/door_recording.yaml
+```
 
-🖥️ "OSD" Tab (On-Screen Display)
-Visual editor for overlaying text on video:
-
-Select a camera from the list
-
-Configure regions (up to 4):
-
-Region 0 - for logo (BMP)
-
-Regions 1-3 - for text
-
-Drag with mouse - position updates in real-time
-
-Customize appearance:
-
-Text color (RGB picker)
-
-Font size (8-72 px)
-
-Font (Ubuntu Mono, Arial, Times)
-
-Opacity (0-255)
-
-Use variables:
-
-$t - current time (ticks in real-time!)
-
-$B - bitrate
-
-$C - frame counter
-
-$M - memory usage
-
-Save templates for quick application
-
-OSD Examples:
-
-Region 1: "🚪 DOOR OPEN! 03/13/2026 15:23:45" (red, 48px)
-Region 2: "⏺️ RECORDING: 3 MIN" (yellow, 36px)
-Region 3: "⏱️ 15:23:45" (green, 32px) - ticking clock
-
-📸 "QR Scanner & Generator" Tab
-Scanner
-Select a camera
-
-Configure expected code (optional)
-
-Click "Start scanning"
-
-When QR code is detected, HA generates openipc_qr_detected event
-
-Generator
-Enter text or URL
-
-Adjust size, colors, error correction level
-
-Click "Generate"
-
-"Save to file" or "Send to Telegram"
-
-History
-All scans are saved
-
-CSV export
-
-Copy code to clipboard
-
-Quick QR generation from history
-
-🔊 "TTS" Tab (Text-to-Speech)
-Voice notification settings with support for different providers:
-
-Available Providers:
-Google TTS - cloud-based, 30+ languages, high quality
-
-RHVoice - local, offline, "Anna" voice (requires separate addon)
-
-How to use:
-Select camera
-
-Choose provider
-
-Select language
-
-Enter text
-
-Click "Test"
-
-Verification:
-Success - green notification
-
-Debug files saved to /config/www/tts_debug_*.pcm
-
-🤖 Blueprints
-Blueprint 1: QR Scanner (existing in repository)
-
-
-# Import URL:
-https://github.com/OpenIPC/hass/blob/main/blueprints/automation/openipc/qr_scanner.yaml
-
-
-Creates an automation that starts scanning on button press, checks the code, and performs actions:
-
-TTS notification
-
-Relay control
-
-Telegram notifications
-
-Blueprint 2: Door Opening Video Recording (NEW!)
-
-# Import URL:
-https://github.com/OpenIPC/hass/blob/main/blueprints/automation/openipc/door_recording.yaml
-
-Universal automation with advanced features:
-
-Settings:
-Door sensor - any binary_sensor with device_class door
-
-Camera - OpenIPC camera
-
-Media player - camera speaker
-
-TTS provider - Google or RHVoice
-
-Recording duration - 10 to 600 seconds
-
-OSD regions - select numbers for text
-
-Telegram - enable/disable sending
-
-Post-recording time - how many seconds to show ticking clock
+Configurable settings: door sensor, camera, media player, TTS provider, recording duration (10–600 s), OSD regions, Telegram toggle, post-recording clock duration.
 
 What it does:
-Clears old OSD
+1. Clears old OSD
+2. TTS: "Door open, starting recording"
+3. Sets OSD with date/time (ticking clock)
+4. Records video for the configured duration
+5. TTS: "Recording complete"
+6. Sends video to Telegram (if enabled)
+7. Clears OSD
 
-TTS: "Door open, starting recording" (selected provider)
+---
 
-Sets OSD with date and time (with ticking clock!)
+## 📝 Automation Examples
 
-Records video for specified duration
-
-After recording shows ticking clock on screen
-
-TTS: "Recording complete"
-
-Sends video to Telegram (if enabled)
-
-TTS: "Video sent to Telegram"
-
-Clears screen
-
-OSD during recording:
-
-🚪 DOOR OPEN! 03/13/2026
-⏺️ RECORDING: 3 MIN
-
-
-OSD after recording:
-
-03/13/2026
-⏱️ 15:23:45  (ticks!)
-
-
-📝 Automation Examples
-Simple TTS Notification
-
-
+**Simple TTS on motion:**
+```yaml
 alias: "Say Hello on Motion"
 trigger:
   - platform: state
@@ -285,13 +158,10 @@ action:
       media_content_type: "tts"
       extra:
         provider: "rhvoice"  # or "google"
+```
 
-
-TTS with Dynamic Provider Selection
-
-
-QR Scan for Gate Control
-
+**QR scan for gate control:**
+```yaml
 alias: "Open Gate with QR Code"
 trigger:
   - platform: event
@@ -312,243 +182,78 @@ action:
     data:
       media_content_id: "Access granted, gate open"
       media_content_type: "tts"
+```
 
+---
 
+## 🔧 Setting Up RHVoice (Local TTS)
 
-🔧 Setting up RHVoice (Local TTS)
-To use RHVoice, install a separate addon:
+1. Add repository: `https://github.com/definitio/ha-rhvoice-addon`
+2. Install the **RHVoice** Home Assistant addon
+3. Install the RHVoice integration via HACS
+4. In integration settings, set host to `localhost`
 
-Add repository: https://github.com/definitio/ha-rhvoice-addon
+---
 
-Install RHVoice Home Assistant addon
+## 📊 Project Structure
 
-Install RHVoice integration via HACS
-
-In integration settings, set host: localhost
-
-After this, RHVoice will be available in our blueprint and web interface.
-
-📊 Project Structure
-
-
-
+```
 /
-├── custom_components/openipc/     # HA Integration
-│   ├── __init__.py
-│   ├── api.py
-│   ├── api_ha.py                  # API for addon
-│   ├── beward_device.py
-│   ├── binary_sensor.py
-│   ├── button.py
-│   ├── camera.py
-│   ├── commands.py
-│   ├── config_flow.py
-│   ├── const.py
-│   ├── coordinator.py
-│   ├── diagnostics.py
-│   ├── discovery.py
-│   ├── helpers.py
-│   ├── lnpr.py
-│   ├── media_player.py
-│   ├── migration.py
-│   ├── notify.py
-│   ├── onvif_client.py
-│   ├── openipc_audio.py
-│   ├── osd_manager.py
-│   ├── parsers.py
-│   ├── ptz.py
-│   ├── ptz_entity.py
-│   ├── qr_scanner.py
-│   ├── qr_utils.py
-│   ├── recorder.py
-│   ├── recording.py
-│   ├── select.py
-│   ├── sensor.py
-│   ├── services.py
-│   ├── services_impl.py
-│   ├── switch.py
-│   ├── vivotek_device.py
-│   ├── vivotek_ptz.py
-│   └── vivotek_ptz_entities.py
-│
-├── addon/                          # OpenIPC Bridge Addon
+├── custom_components/openipc/     # HA Integration (HACS)
+├── openipc-bridge/                # HA Addon
 │   ├── Dockerfile
 │   ├── config.yaml
+│   ├── build.yaml
 │   ├── run.sh
 │   ├── server.py
+│   ├── stream_monitor.py
+│   ├── recording_api.py
+│   ├── config_manager.py
+│   ├── camera_monitor.py
+│   ├── daily_reporter.py
 │   ├── tts_generate_openipc.sh
 │   ├── tts_generate.sh
-│   ├── tts_generate_rhvoice.sh     # New script for RHVoice
-│   ├── check_modules.py
+│   ├── tts_generate_rhvoice.sh
 │   └── templates/
-│       ├── base.html
-│       ├── index.html
-│       ├── config.html
-│       ├── osd.html                # Visual OSD editor
-│       ├── qr.html                 # QR scanner & generator
-│       └── tts.html                # TTS with provider selection
-│
 └── blueprints/automation/openipc/
-    ├── qr_scanner.yaml             # Existing blueprint
-    └── door_recording.yaml         # NEW blueprint with TTS selection
-
-
-
-🆘 Support & Troubleshooting
-Logs
-Integration: Settings → System → Logs → openipc
-
-Addon: Supervisor → OpenIPC Bridge → Logs
-
-TTS Debug: check /config/www/tts_debug_*.pcm
-
-Common Issues
-OSD not appearing
-Check if OSD service is running on camera (ps | grep osd)
-
-Verify port 9000 accessibility (netstat -tlnp | grep 9000)
-
-In OSD web interface, check opacity settings (opacity: 255)
-
-TTS not working
-Verify camera accessibility (ping)
-
-Check correct endpoint (/play_audio for OpenIPC)
-
-For RHVoice: ensure separate addon is running
-
-Camera import from HA not working
-Verify http dependency in manifest.json
-
-Check endpoint: http://[HA_IP]:8123/api/openipc/cameras
-# OpenIPC Camera for Home Assistant 🚀
-
-
-
-
-
-## ✨ Ключевые возможности / Key Features
-
-### 📹 Видеонаблюдение / Video Surveillance
-*   **RTSP потоки и снимки / RTSP streams and snapshots**
-*   **Запись в медиа-папку HA с OSD / Recording to HA media folder with OSD**
-*   PTZ управление для Vivotek / PTZ control for Vivotek
-*   Управление реле для Beward / Relay control for Beward
-
-### 📊 Мониторинг / Monitoring
-*   Температура CPU, FPS, битрейт / CPU temperature, FPS, bitrate
-*   Статус SD-карты, сетевая статистика / SD card status, network statistics
-*   Распознавание номеров (LNPR) для Beward / License plate recognition (LNPR) for Beward
-
-### 🔊 Text-to-Speech (TTS)
-*   **Google TTS** (облачный / cloud-based)
-*   **RHVoice** (локальный, голос "Анна" / local, "Anna" voice)
-*   Поддержка Beward (A-law) и OpenIPC (PCM) / Support for Beward (A-law) and OpenIPC (PCM)
-
-### 📱 Уведомления / Notifications
-*   Отправка фото и видео в Telegram / Send photos and videos to Telegram
-*   **Визуальный конструктор уведомлений / Visual notification builder**
+    ├── qr_scanner.yaml
+    └── door_recording.yaml
+```
 
 ---
 
-## 🚀 Что нового 16 марта 2026 / What's New on March 16, 2026
+## 🆘 Troubleshooting
 
-Это крупнейшее обновление нашего аддона `openipc-bridge`, которое превращает его в полноценную систему видеонаблюдения. Мы переработали архитектуру, добавили запись видео, умный мониторинг камер и многое другое!
-This is the biggest update to our `openipc-bridge` addon, turning it into a full-fledged video surveillance system. We've reworked the architecture, added video recording, smart camera monitoring, and much more!
+**Logs:**
+- Integration: Settings → System → Logs → `openipc`
+- Addon: Supervisor → OpenIPC Bridge → Logs
+- TTS debug files: `/config/www/tts_debug_*.pcm`
 
-### 🎥 **Новая система записи / New Recording System**
-*   **Гибкие настройки:** Вы можете настроить качество записи (`high`/`medium`/`low`), FPS (5-30), и длительность сегмента (от 1 минуты до 1 часа) для каждой камеры индивидуально.
-    **Flexible settings:** You can now configure recording quality (`high`/`medium`/`low`), FPS (5-30), and segment duration (from 1 minute to 1 hour) for each camera individually.
-*   **Управление ресурсами:** Добавлен лимит на количество одновременных записей (по умолчанию 5), чтобы не перегружать систему, на которой запущен аддон. Вы можете легко изменить этот лимит в интерфейсе.
-    **Resource management:** A limit on the number of simultaneous recordings has been added (default 5) to prevent overloading the system running the addon. You can easily change this limit in the UI.
-*   **Автоматическая очистка:** Старые записи автоматически удаляются согласно заданной глубине архива (в днях).
-    **Automatic cleanup:** Old recordings are automatically deleted according to the set archive depth (in days).
-*   **Удобный архив:** Новая страница архива с мощными фильтрами (по нескольким камерам, дате и времени, типу событий), встроенным видеоплеером и временной шкалой с отметками событий.
-    **Convenient archive:** A new archive page with powerful filters (by multiple cameras, date & time, event type), a built-in video player, and a timeline with event marks.
+**OSD not appearing:**
+- Check OSD service is running on camera: `ps | grep osd`
+- Verify port 9000 is accessible: `netstat -tlnp | grep 9000`
+- Check opacity setting is not 0
 
-### 🔔 **Новые уведомления / New Notifications**
-*   **Централизованные настройки Telegram:** Все настройки Telegram (токен, chat ID, качество видео) теперь собраны на отдельной странице "Уведомления".
-    **Centralized Telegram settings:** All Telegram settings (token, chat ID, video quality) are now collected on a separate "Notifications" page.
-*   **Отправка снимков и видео:** Вы можете отправлять снимки прямо из плеера архива, а также видео (с возможностью сжатия для экономии трафика).
-    **Sending snapshots and videos:** You can send snapshots directly from the archive player, as well as videos (with the option to compress them to save traffic).
+**TTS not working:**
+- Verify camera is reachable (ping)
+- Check the correct endpoint is configured (`/play_audio` for OpenIPC)
+- For RHVoice: ensure the separate addon is running
 
-### 🩺 **Мониторинг и автоматическое восстановление / Monitoring & Self-Healing**
-*   **Умный мониторинг majestic:** Аддон теперь самостоятельно следит за состоянием каждой OpenIPC камеры. Он проверяет не только ping, но и доступность RTSP-порта (554) и, что самое важное, анализирует метрики самого процесса `majestic` (температура, FPS, память), получаемые через `/metrics`.
-    **Smart majestic monitoring:** The addon now independently monitors the health of each OpenIPC camera. It checks not only ping but also the availability of the RTSP port (554) and, most importantly, analyzes the metrics of the `majestic` process itself (temperature, FPS, memory) obtained via `/metrics`.
-*   **Автоперезапуск:** Если `majestic` перестает отвечать (например, падает веб-интерфейс или пропадает RTSP), аддон автоматически перезапустит его через SSH после 3 неудачных проверок.
-    **Auto-restart:** If `majestic` becomes unresponsive (e.g., the web interface crashes or RTSP is lost), the addon will automatically restart it via SSH after 3 failed checks.
-*   **Ежедневные отчеты в Telegram:** Каждый день в 21:00 вы будете получать подробный отчет о состоянии всех ваших камер: сколько здоровых, сколько с предупреждениями, сколько было перезапусков и общая статистика по записям и снимкам.
-    **Daily Telegram reports:** Every day at 9:00 PM, you will receive a detailed report on the status of all your cameras: how many are healthy, how many have warnings, how many restarts occurred, and overall statistics on recordings and snapshots.
-
-### 🗄️ **Управление снимками / Snapshot Management**
-*   **Реальные снимки:** Страница "Снимки" теперь показывает реальные файлы из папки `/config/www/snapshots`, а не тестовые данные.
-    **Real snapshots:** The "Snapshots" page now displays actual files from the `/config/www/snapshots` folder, not mock data.
-*   **Удобный просмотр:** Добавлен просмотр в модальном окне с детальной информацией (время, камера, тип, размер) и возможностью скачать или отправить снимок в Telegram.
-    **Convenient viewing:** Added a modal view with detailed information (time, camera, type, size) and the ability to download or send the snapshot to Telegram.
-
-### ⚙️ **Улучшения интерфейса / UI Improvements**
-*   **Системная вкладка:** В настройках камер (`/config`) появилась новая вкладка "Система", где можно изменить лимит одновременных записей, применить настройки ко всем камерам сразу и увидеть статистику.
-    **System tab:** A new "System" tab has appeared in the camera settings (`/config`), where you can change the limit for simultaneous recordings, apply settings to all cameras at once, and see statistics.
-*   **Временные метки в архиве:** При просмотре видео на шкале времени теперь отображается абсолютное время записи, что позволяет точно понять, когда произошло событие.
-    **Timeline timestamps in archive:** When viewing a video, the absolute recording time is now displayed on the timeline, allowing you to know exactly when an event occurred.
+**Camera import from HA not working:**
+- Verify `http` is listed in `manifest.json` dependencies
+- Check the API endpoint: `http://[HA_IP]:8123/api/openipc/cameras`
 
 ---
 
-## 🚧 **Планы на будущее / Future Plans**
+## 🤝 Contributing
 
-*   **Расширенная детекция объектов (Object Detection):** В следующих релизах мы планируем добавить настоящую детекцию людей, автомобилей и других объектов на базе ИИ.
-    **Advanced Object Detection:** In future releases, we plan to add real AI-based detection of people, cars, and other objects.
-*   **Распознавание номеров (LPR):** Текущие сенсоры для номеров являются заглушками. Полноценная поддержка LPR появится позже.
-    **License Plate Recognition (LPR):** The current license plate sensors are placeholders. Full LPR support will come later.
-
-
----
-
-## 📦 Установка / Installation
-
-### 1. Аддон OpenIPC Bridge (Требуется для новых функций / Required for new features)
-1.  Перейдите в Supervisor → Add-on Store.
-2.  Нажмите на три точки (⋮) в правом верхнем углу и выберите "Repositories".
-3.  Добавьте репозиторий: `https://github.com/OpenIPC/hass`
-4.  Найдите и установите аддон **OpenIPC Bridge**.
-5.  После установки аддон будет доступен по адресу `http://[IP-АДРЕС-HA]:5000`
-
-### 2. Интеграция OpenIPC Camera
-*   **Через HACS (рекомендуется):**
-    1.  Откройте HACS → Integrations → ⋮ → Custom repositories.
-    2.  Добавьте `https://github.com/OpenIPC/hass` с категорией "Integration".
-    3.  Найдите "OpenIPC Camera" и установите.
-    4.  Перезапустите Home Assistant.
-*   **Вручную:**
-    Скопируйте папку `custom_components/openipc` в директорию `/config/custom_components/` и перезапустите HA.
+- ⭐ Star us on GitHub
+- 🐛 Report bugs in Issues
+- 📝 Improve documentation
+- 🔧 Submit Pull Requests
 
 ---
 
-## 🤝 Как помочь проекту / How to Contribute
+## 📜 License
 
-*   ⭐ Поставьте звезду на GitHub / Star us on GitHub
-*   🐛 Сообщайте об ошибках в Issues / Report bugs in Issues
-*   📝 Улучшайте документацию / Improve documentation
-*   🔧 Отправляйте Pull Request'ы / Submit Pull Requests
-
----
-
-## 📜 Лицензия / License
-
-MIT License
-
-**OpenIPC Community - делаем умный дом доступнее! / making smart homes accessible!** 🚀
-
-🤝 Contributing
-⭐ Star us on GitHub
-
-🐛 Report issues in Issues
-
-📝 Improve documentation
-
-🔧 Submit Pull Requests
-
-📜 License
-MIT License
-
-OpenIPC Community - making smart homes accessible! 🚀
+MIT License — OpenIPC Community 🚀
