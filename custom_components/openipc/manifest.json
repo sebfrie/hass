@@ -7,7 +7,6 @@
     "stream",
     "ssdp",
     "zeroconf",
-    "telegram_bot",
     "media_player",
     "http"
   ],
@@ -17,7 +16,6 @@
   "issue_tracker": "https://github.com/Ripthulhu/OpenIPC-HASS/issues",
   "requirements": [
     "aiohttp>=3.8.0",
-    "async-timeout>=4.0.0",
     "aiofiles>=23.2.0",
     "beward==1.1.4"
   ],
