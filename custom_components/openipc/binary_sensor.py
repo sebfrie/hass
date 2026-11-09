@@ -173,5 +173,5 @@ class OpenIPCBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "manufacturer": manufacturer,
             "model": model,
             "sw_version": parsed.get("firmware", "Unknown"),
-            "hw_version": parsed.get("architecture", "Unknown"),
+            "hw_version": parsed.get("hostname", "Unknown"),
         }

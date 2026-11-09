@@ -2,7 +2,7 @@
 from homeassistant.const import Platform
 
 DOMAIN = "openipc"
-PLATFORMS = ["camera", "binary_sensor", "sensor", "switch", "button", "media_player", "select"]
+PLATFORMS = ["camera", "binary_sensor", "sensor", "switch", "button", "media_player", "select", "update"]
 
 # Default values
 DEFAULT_PORT = 80
