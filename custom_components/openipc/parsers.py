@@ -56,6 +56,15 @@ def parse_camera_data(config, metrics, status):
     
     return parsed
 
+def _metric_labels(metrics, name):
+    """Return labels of a labelled metric (stored as 'k=v,k=v' keys)."""
+    entry = metrics.get(name)
+    if not isinstance(entry, dict):
+        return {}
+    for key in entry:
+        return dict(p.split("=", 1) for p in str(key).split(",") if "=" in p)
+    return {}
+
 def _parse_metrics(parsed, metrics):
     """Parse Prometheus metrics."""
     if "node_hwmon_temp_celsius" in metrics:
@@ -92,14 +101,26 @@ def _parse_metrics(parsed, metrics):
         
         parsed["uptime_seconds"] = uptime_seconds
     
-    if "node_uname_info" in metrics:
-        uname = metrics.get("node_uname_info", {})
+    uname = _metric_labels(metrics, "node_uname_info")
+    if uname:
         if "nodename" in uname:
             parsed["hostname"] = uname["nodename"]
         if "machine" in uname:
             parsed["architecture"] = uname["machine"]
         if "release" in uname:
             parsed["kernel"] = uname["release"]
+
+    os_info = _metric_labels(metrics, "node_os_info")
+    firmware = (
+        os_info.get("build_id")
+        or os_info.get("version")
+        or os_info.get("pretty_name")
+        or os_info.get("version_id")
+    )
+    if firmware:
+        parsed["firmware"] = firmware
+    elif "release" in uname:
+        parsed["firmware"] = uname["release"]
     
     if "node_memory_MemTotal_bytes" in metrics:
         parsed["mem_total"] = metrics["node_memory_MemTotal_bytes"] / 1024 / 1024

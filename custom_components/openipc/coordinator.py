@@ -6,7 +6,6 @@ import re
 from datetime import timedelta
 
 import aiohttp
-import async_timeout
 from homeassistant.const import CONF_HOST, CONF_NAME, CONF_PORT, CONF_USERNAME, CONF_PASSWORD
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
@@ -198,7 +197,7 @@ class OpenIPCDataUpdateCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self):
         """Fetch data from camera."""
         try:
-            async with async_timeout.timeout(10):
+            async with asyncio.timeout(10):
                 _LOGGER.debug("Attempting to fetch data from camera %s", self.host)
                 
                 config_data = await self._get_json_config()

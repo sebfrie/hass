@@ -1,6 +1,6 @@
 """LNPR (License Plate Recognition) functions for Beward cameras."""
 import logging
-import async_timeout
+import asyncio
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ async def async_update_lnpr(coordinator):
     
     try:
         url = f"http://{coordinator.host}:{coordinator.port}/cgi-bin/lnprstate_cgi"
-        async with async_timeout.timeout(5):
+        async with asyncio.timeout(5):
             async with coordinator.session.get(url, auth=coordinator.auth) as response:
                 if response.status == 200:
                     text = await response.text()
