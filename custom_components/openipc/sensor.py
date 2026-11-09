@@ -376,7 +376,7 @@ class OpenIPCSensor(CoordinatorEntity, SensorEntity):
             "manufacturer": "OpenIPC",
             "model": parsed.get("model", "Camera"),
             "sw_version": parsed.get("firmware", "Unknown"),
-            "hw_version": parsed.get("architecture", "Unknown"),
+            "hw_version": parsed.get("hostname", "Unknown"),
         }
 
 
