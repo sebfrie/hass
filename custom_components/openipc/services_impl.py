@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 
 from homeassistant.const import CONF_ENTITY_ID
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import (
     DOMAIN,
@@ -482,27 +483,27 @@ async def async_record_with_osd(call: ServiceCall, hass: HomeAssistant) -> None:
     
     if not entity_id:
         _LOGGER.error("❌ No entity_id provided for record_with_osd service")
-        return
+        raise HomeAssistantError("Cannot record video with OSD; see log")
     
     if not duration:
         _LOGGER.error("No duration provided for record_with_osd service")
-        return
+        raise HomeAssistantError("Cannot record video with OSD; see log")
     
     try:
         duration = int(duration)
     except (ValueError, TypeError):
         _LOGGER.error("Invalid duration value: %s", duration)
-        return
+        raise HomeAssistantError("Cannot record video with OSD; see log")
     
     coordinator = await find_coordinator_by_entity_id(hass, entity_id)
     
     if not coordinator:
         _LOGGER.error("❌ No camera found with entity_id: %s", entity_id)
-        return
+        raise HomeAssistantError("Cannot record video with OSD; see log")
         
     if not hasattr(coordinator, 'recorder'):
         _LOGGER.error("❌ Coordinator has no recorder for %s", entity_id)
-        return
+        raise HomeAssistantError("Cannot record video with OSD; see log")
     
     _LOGGER.info("✅ Using camera - Name: %s, Host: %s", 
                 coordinator.recorder.camera_name, coordinator.host)
@@ -515,6 +516,11 @@ async def async_record_with_osd(call: ServiceCall, hass: HomeAssistant) -> None:
         "bg_color": "black@0.5",
     }
     
+    if not await coordinator.recorder.ensure_folder_exists():
+        raise HomeAssistantError(
+            f"Cannot create record folder {coordinator.recorder.record_folder}"
+        )
+
     camera_name = entity_id.replace("camera.", "").replace(".", "_")
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{coordinator.recorder.record_folder}/{camera_name}_{timestamp}_{duration}s.mp4"
@@ -554,7 +560,7 @@ async def async_record_with_osd(call: ServiceCall, hass: HomeAssistant) -> None:
         
     except Exception as err:
         _LOGGER.error("Failed to record video with OSD: %s", err)
-        result = {"success": False, "error": str(err)}
+        raise HomeAssistantError(f"Failed to record video with OSD: {err}") from err
     
     _LOGGER.debug("=" * 60)
 

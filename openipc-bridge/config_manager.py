@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 CONFIG_FILE = "/config/openipc_bridge_config.yaml"
 CONFIG_BACKUP_DIR = "/config/openipc_backups"
+ADDON_OPTIONS_FILE = "/data/options.json"
 INTEGRATION_CONFIG_FILE = "/config/.storage/openipc_config.json"
 
 # Структура конфигурации по умолчанию
@@ -202,6 +203,22 @@ class ConfigManager:
         except Exception as e:
             logger.error(f"❌ Failed to load config: {e}")
             logger.exception(e)
+        self._apply_addon_options()
+
+    def _apply_addon_options(self):
+        """Map Home Assistant add-on options onto the runtime config."""
+        try:
+            if not os.path.exists(ADDON_OPTIONS_FILE):
+                return
+            with open(ADDON_OPTIONS_FILE, 'r', encoding='utf-8') as f:
+                options = json.load(f)
+            telegram = self.config.setdefault("telegram", {})
+            if options.get("telegram_bot_token"):
+                telegram["bot_token"] = options["telegram_bot_token"]
+            if options.get("telegram_chat_id"):
+                telegram["chat_id"] = str(options["telegram_chat_id"])
+        except Exception as e:
+            logger.error(f"❌ Failed to read add-on options: {e}")
     
     def _deep_merge(self, base: dict, update: dict):
         """Рекурсивное слияние словарей"""

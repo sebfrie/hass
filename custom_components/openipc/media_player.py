@@ -221,7 +221,9 @@ class OpenIPCMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         self._attr_state = MediaPlayerState.PLAYING
         
         # Определяем язык из kwargs или параметров
-        language = kwargs.get("language", "ru")
+        extra = kwargs.get("extra") or {}
+        language = kwargs.get("language") or extra.get("language", "ru")
+        provider = kwargs.get("provider") or extra.get("provider")
         
         if media_type == "tts":
             self._media_title = f"TTS: {media_id[:50]}"
@@ -242,6 +244,8 @@ class OpenIPCMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
                 "text": media_id,
                 "lang": language
             }
+            if provider:
+                payload["provider"] = provider
             
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, timeout=10) as response:

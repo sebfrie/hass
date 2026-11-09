@@ -5,7 +5,6 @@ import socket
 import ipaddress
 from typing import List, Dict, Optional, Tuple
 import aiohttp
-import async_timeout
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -270,7 +269,7 @@ class OpenICPCDiscovery:
             for endpoint in DISCOVERY_ENDPOINTS:
                 url = f"http://{ip}:{port}{endpoint}"
                 try:
-                    async with async_timeout.timeout(1):
+                    async with asyncio.timeout(1):
                         async with self.session.get(url) as response:
                             if response.status == 200:
                                 # Try to verify it's OpenIPC
@@ -302,7 +301,7 @@ class OpenICPCDiscovery:
         
         for url, expected_text in verification_endpoints:
             try:
-                async with async_timeout.timeout(2):
+                async with asyncio.timeout(2):
                     async with self.session.get(url) as response:
                         if response.status == 200:
                             if expected_text:
