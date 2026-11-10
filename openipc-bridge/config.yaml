@@ -1,5 +1,5 @@
 name: "OpenIPC Bridge"
-version: "1.3.7"
+version: "1.4.0"
 slug: openipc_bridge
 description: "OpenIPC Bridge with built-in TTS generators, OSD editor, and video streaming"
 url: "https://github.com/sebfrie/hass"
@@ -23,9 +23,16 @@ hassio_role: default
 homeassistant_api: true
 map:
   - config:rw
+  - media:rw
 options:
+  # Password for access to the API/Web UI from outside the add-on host
+  # (Basic auth, any username, or "Authorization: Bearer <password>").
+  # Requests from the HA host itself (localhost) need no password.
+  # While empty, all remote requests are rejected.
+  access_password: ""
   telegram_bot_token: ""
   telegram_chat_id: ""
 schema:
+  access_password: password
   telegram_bot_token: str
   telegram_chat_id: str

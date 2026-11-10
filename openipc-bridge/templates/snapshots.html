@@ -964,21 +964,26 @@ function renderSnapshots() {
         
         return `
             <div class="snapshot-card" 
-                 onclick="viewSnapshot('${snap.id}')"
-                 oncontextmenu="showContextMenu(event, '${snap.id}')">
-                <img src="${snap.path}" class="snapshot-image" alt="Snapshot" 
+                 onclick="viewSnapshot('${escapeHtml(snap.id)}')"
+                 oncontextmenu="showContextMenu(event, '${escapeHtml(snap.id)}')">
+                <img src="${escapeHtml(snap.path)}" class="snapshot-image" alt="Snapshot" 
                      onerror="this.src='https://via.placeholder.com/200x150?text=No+Image'">
                 <div class="snapshot-size">${sizeKB} KB</div>
                 <div class="snapshot-info">
-                    <div class="snapshot-camera">${cameraName}</div>
+                    <div class="snapshot-camera">${escapeHtml(cameraName)}</div>
                     <div class="snapshot-time">${timeStr}</div>
                     <div class="snapshot-tags">
-                        <span class="snapshot-tag ${typeClass}">${typeIcon} ${snap.type}</span>
+                        <span class="snapshot-tag ${typeClass}">${typeIcon} ${escapeHtml(snap.type)}</span>
                     </div>
                 </div>
             </div>
         `;
     }).join('');
+}
+
+// Экранирование данных от сервера перед вставкой в HTML
+function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
 }
 
 function updateStats() {

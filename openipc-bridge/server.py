@@ -33,7 +33,18 @@ import requests
 
 # Импорт модуля записи и менеджера конфигурации
 from recording_api import init_recording_api
-from config_manager import get_config_manager
+from config_manager import get_config_manager, MASK
+import security
+from security import safe_name, valid_lang, resolve_within, valid_camera_host, redact, init_auth
+
+TELEGRAM_TOKEN_RE = re.compile(r'^\d{5,15}:[A-Za-z0-9_\-]{20,80}$')
+TELEGRAM_VIDEO_QUALITIES = ('original', 'high', 'medium', 'low')
+MAX_ACTIVE_SCANS = 10
+MAX_TTS_TEXT_LENGTH = 500
+LOGO_DIR = os.path.join(security.MEDIA_ROOT, "logos")
+LOGO_EXTENSIONS = ('.bmp', '.png', '.jpg', '.jpeg', '.gif')
+SNAPSHOT_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif')
+TTS_PROVIDERS = ('google', 'rhvoice', 'yandex')
 
 # ==================== БЛОК 1: КОНФИГУРАЦИЯ И КОНСТАНТЫ ====================
 
@@ -55,20 +66,79 @@ TTS_GENERATE_RHVoice_SCRIPT = "/app/tts_generate_rhvoice.sh"
 QR_DEBUG_FILE = "/config/qr_debug.log"
 TRANSLATIONS_DIR = "/app/translations"
 
-# Директории для записи
-RECORDINGS_DIR = "/config/www/recordings"
-EXPORTS_DIR = "/config/www/exports"
-SNAPSHOTS_DIR = "/config/www/snapshots"
+# Директории для записи (в /media: /config/www отдаётся HA на /local/ без авторизации)
+RECORDINGS_DIR = os.path.join(security.MEDIA_ROOT, "recordings")
+EXPORTS_DIR = os.path.join(security.MEDIA_ROOT, "exports")
+SNAPSHOTS_DIR = os.path.join(security.MEDIA_ROOT, "snapshots")
+DEBUG_DIR = security.DEBUG_DIR
+
+# Переносим старые данные из публичной /config/www
+security.migrate_legacy_media()
 
 # Создаем директории для записей
 os.makedirs(RECORDINGS_DIR, exist_ok=True)
 os.makedirs(EXPORTS_DIR, exist_ok=True)
 os.makedirs(SNAPSHOTS_DIR, exist_ok=True)
+os.makedirs(DEBUG_DIR, exist_ok=True)
 os.makedirs(os.path.join(RECORDINGS_DIR, "thumbnails"), exist_ok=True)
+
+VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.avi', '.mov', '.ts', '.webm')
+
+# URL/путь, который клиент может прислать, -> каталог на диске
+_MEDIA_ALIASES = (
+    ('/recordings/', RECORDINGS_DIR),
+    ('/exports/', EXPORTS_DIR),
+    ('/snapshots/', SNAPSHOTS_DIR),
+    (f"{security.LEGACY_WWW}/recordings/", RECORDINGS_DIR),
+    (f"{security.LEGACY_WWW}/exports/", EXPORTS_DIR),
+    (f"{security.LEGACY_WWW}/snapshots/", SNAPSHOTS_DIR),
+    ('/local/recordings/', RECORDINGS_DIR),
+    ('/local/exports/', EXPORTS_DIR),
+    ('/local/snapshots/', SNAPSHOTS_DIR),
+)
+
+
+def resolve_media_path(path, extensions=None):
+    """Привести присланный клиентом путь/URL к реальному файлу внутри MEDIA_ROOT.
+
+    Возвращает None, если путь выходит за пределы MEDIA_ROOT, не является файлом
+    или имеет недопустимое расширение.
+    """
+    if not isinstance(path, str) or not path or '\x00' in path:
+        return None
+    resolved = None
+    if path.startswith(security.MEDIA_ROOT + '/'):
+        resolved = resolve_within(security.MEDIA_ROOT, path[len(security.MEDIA_ROOT) + 1:])
+    else:
+        for prefix, base in _MEDIA_ALIASES:
+            if path.startswith(prefix):
+                resolved = resolve_within(base, path[len(prefix):])
+                break
+    if not resolved or not os.path.isfile(resolved):
+        return None
+    if extensions and not resolved.lower().endswith(tuple(extensions)):
+        return None
+    return resolved
 
 # Разрешенные расширения файлов для менеджера
 ALLOWED_EXTENSIONS = {'.py', '.sh', '.html', '.yaml', '.yml', '.txt', '.json', '.md'}
+# Исходный код (.py/.sh/.html — шаблоны Jinja тоже исполняются) можно только читать:
+# запись кода через веб-интерфейс дала бы удалённое выполнение команд.
+WRITABLE_EXTENSIONS = {'.yaml', '.yml', '.txt', '.json', '.md'}
 WORKING_DIR = '/app'  # Основная директория аддона
+
+
+def resolve_app_file(filename, writable=False):
+    """Путь к файлу внутри WORKING_DIR или None (traversal, symlink, недопустимое расширение)"""
+    if not isinstance(filename, str) or '\x00' in filename:
+        return None
+    path = resolve_within(WORKING_DIR, filename)
+    if not path or path == os.path.realpath(WORKING_DIR):
+        return None
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in (WRITABLE_EXTENSIONS if writable else ALLOWED_EXTENSIONS):
+        return None
+    return path
 
 # Конфигурация камер по умолчанию (только для RTSP путей)
 CAMERA_PATHS = {
@@ -435,6 +505,8 @@ class StreamManager:
         self.camera_ip = camera_ip
         self.username = username
         self.password = password
+        if stream_type not in ('main', 'sub'):
+            stream_type = 'main'
         self.stream_type = stream_type
         self.output_name = f"{camera_ip}_{stream_type}"
         self.on_status_change = on_status_change
@@ -447,14 +519,15 @@ class StreamManager:
                 self.output_name = f"{camera_ip}_main"
         
         self.hls_dir = f"/tmp/hls/{self.output_name}"
-        self.log_file = f"{self.hls_dir}/ffmpeg.log"
+        # Лог ffmpeg может содержать RTSP-URL с паролем, поэтому он лежит вне раздаваемой папки
+        self.log_file = f"/tmp/hls/{self.output_name}.ffmpeg.log"
         self.playlist_path = f"{self.hls_dir}/playlist.m3u8"
         
         # Создаем директорию и устанавливаем права
         try:
             os.makedirs(self.hls_dir, exist_ok=True)
-            os.chmod(self.hls_dir, 0o777)
-            logging.info(f"✅ Created HLS directory with 777 permissions: {self.hls_dir}")
+            os.chmod(self.hls_dir, 0o755)
+            logging.info(f"✅ Created HLS directory: {self.hls_dir}")
             
             # Проверяем, можем ли мы писать в директорию
             test_file = f"{self.hls_dir}/write_test.tmp"
@@ -496,7 +569,7 @@ class StreamManager:
             stream_path = '/stream=0' if self.stream_type == 'main' else '/stream=1'
         
         self.rtsp_url = f"rtsp://{self.username}:{self.password}@{self.camera_ip}:554{stream_path}"
-        logging.info(f"📹 Using RTSP URL: {self.rtsp_url.replace(self.password, '****')}")
+        logging.info(f"📹 Using RTSP URL: {redact(self.rtsp_url)}")
         
         # Расширенные параметры для нестабильных соединений
         input_options = [
@@ -550,7 +623,7 @@ class StreamManager:
             playlist_path_abs
         ]
         
-        logging.debug(f"FFmpeg command: {' '.join(cmd)}")
+        logging.debug(f"FFmpeg command: {redact(' '.join(cmd))}")
         return cmd
     
     def _start_ffmpeg(self):
@@ -564,10 +637,10 @@ class StreamManager:
                 self.hls_dir = f"/tmp/hls/{self.output_name}"
                 self.playlist_path = f"{self.hls_dir}/playlist.m3u8"
                 os.makedirs(self.hls_dir, exist_ok=True)
-                os.chmod(self.hls_dir, 0o777)
+                os.chmod(self.hls_dir, 0o755)
             
             cmd = self._get_ffmpeg_cmd()
-            cmd_str = ' '.join(cmd)
+            cmd_str = redact(' '.join(cmd))
             logging.info(f"🎬 Starting FFmpeg for {self.output_name}")
             logging.info(f"📋 Command: {cmd_str}")
             
@@ -598,9 +671,9 @@ class StreamManager:
                             self.ffmpeg_output += line
                             # Логируем важные сообщения
                             if 'error' in line.lower() or 'warning' in line.lower():
-                                logging.warning(f"FFmpeg [{self.output_name}]: {line.strip()}")
+                                logging.warning(f"FFmpeg [{self.output_name}]: {redact(line.strip())}")
                             else:
-                                logging.debug(f"FFmpeg [{self.output_name}]: {line.strip()}")
+                                logging.debug(f"FFmpeg [{self.output_name}]: {redact(line.strip())}")
                             
                             # Отслеживаем создание сегментов
                             if 'segment' in line.lower() and 'writing' in line.lower():
@@ -659,7 +732,7 @@ class StreamManager:
             # Записываем весь вывод в лог-файл
             try:
                 with open(self.log_file, 'w') as f:
-                    f.write(self.ffmpeg_output)
+                    f.write(redact(self.ffmpeg_output))
                 logging.info(f"📝 FFmpeg output saved to {self.log_file}")
             except Exception as e:
                 logging.error(f"Failed to save log: {e}")
@@ -882,7 +955,7 @@ class StreamManager:
             "uptime": time.time() - self.start_time if self.start_time else 0,
             "restart_count": self.restart_count,
             "error_count": self.error_count,
-            "last_error": self.last_error,
+            "last_error": redact(self.last_error) if self.last_error else None,
             "playlist_exists": os.path.exists(self.playlist_path),
             "playlist_size": os.path.getsize(self.playlist_path) if os.path.exists(self.playlist_path) else 0,
             "playlist_content": playlist_content[:500] if playlist_content else "",
@@ -903,6 +976,8 @@ class StreamManager:
 # ==================== БЛОК 3: FLASK ПРИЛОЖЕНИЕ И БАЗОВЫЕ ЭНДПОИНТЫ ====================
 
 app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = 200 * 1024 * 1024  # загрузки (OSD, файлы, импорт) ограничены по размеру
+init_auth(app)
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
 
@@ -980,10 +1055,10 @@ def get_camera_credentials(camera_ip):
     try:
         cam_config = config_manager.get_camera(camera_ip)
         if cam_config:
-            return cam_config.get('username', 'root'), cam_config.get('password', '12345')
+            return cam_config.get('username', ''), cam_config.get('password', '')
     except Exception as e:
         logger.error(f"Error getting credentials for {camera_ip}: {e}")
-    return 'root', '12345'
+    return '', ''
 
 
 def check_camera_online(camera_ip, port=80, timeout=1):
@@ -1042,6 +1117,8 @@ def write_qr_debug(msg):
 
 def load_translations(lang='en'):
     """Загрузить переводы"""
+    if not valid_lang(lang):
+        return {}
     try:
         trans_file = os.path.join(TRANSLATIONS_DIR, f"{lang}.yaml")
         if os.path.exists(trans_file):
@@ -1158,7 +1235,7 @@ def storage_page():
 @app.route('/notifications')
 def notifications_page():
     """Страница уведомлений с настройками Telegram"""
-    return render_template('notifications.html', config=config_manager.config)
+    return render_template('notifications.html', config=config_manager.public_config())
 
 
 @app.route('/resources')
@@ -1184,7 +1261,7 @@ def test_page():
 def serve_recording(filename):
     """Раздача файлов записей"""
     try:
-        return send_from_directory('/config/www/recordings', filename)
+        return send_from_directory(RECORDINGS_DIR, filename)
     except Exception as e:
         logger.error(f"Error serving recording {filename}: {e}")
         return "File not found", 404
@@ -1194,7 +1271,7 @@ def serve_recording(filename):
 def serve_export(filename):
     """Раздача экспортированных файлов"""
     try:
-        return send_from_directory('/config/www/exports', filename)
+        return send_from_directory(EXPORTS_DIR, filename)
     except Exception as e:
         logger.error(f"Error serving export {filename}: {e}")
         return "File not found", 404
@@ -1204,7 +1281,7 @@ def serve_export(filename):
 def serve_snapshot(filename):
     """Раздача снимков"""
     try:
-        return send_from_directory('/config/www/snapshots', filename)
+        return send_from_directory(SNAPSHOTS_DIR, filename)
     except Exception as e:
         logger.error(f"Error serving snapshot {filename}: {e}")
         return "File not found", 404
@@ -1231,7 +1308,8 @@ def api_status():
 @app.route('/api/cameras/status')
 def cameras_status():
     """Статус всех камер с кэшированием"""
-    cameras = get_all_cameras_status()
+    # Кэш содержит полные конфиги камер (с паролями): браузеру отдаём только копии с маской
+    cameras = [config_manager.mask_camera(cam) for cam in get_all_cameras_status()]
     
     # Добавляем OSD информацию
     for cam in cameras:
@@ -1256,8 +1334,7 @@ def active_jobs():
                 "camera": job['camera_id'],
                 "type": "QR Scan",
                 "progress": progress,
-                "status": job['status'],
-                "expected_code": job['expected_code']
+                "status": job['status']
             })
     return jsonify({"jobs": jobs})
 
@@ -1285,80 +1362,50 @@ def camera_snapshot(camera_ip):
 
 # ==================== БЛОК 5: API ДЛЯ РАБОТЫ С КОНФИГУРАЦИЕЙ ====================
 
-def save_config():
-    """Сохранить текущую конфигурацию в файл"""
-    global config
-    try:
-        # Создаем бэкап перед сохранением
-        if os.path.exists(CONFIG_FILE):
-            backup_file = f"{CONFIG_FILE}.backup"
-            shutil.copy2(CONFIG_FILE, backup_file)
-            logger.debug(f"✅ Created config backup: {backup_file}")
-        
-        # Сохраняем конфигурацию
-        with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-            yaml.dump(config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
-        
-        logger.info("✅ Configuration saved successfully")
-        return True
-    except Exception as e:
-        logger.error(f"❌ Failed to save config: {e}")
-        return False
-
-
 @app.route('/api/config', methods=['GET'])
 def get_config_api():
-    """Получить текущую конфигурацию"""
+    """Получить текущую конфигурацию (секреты маскируются)"""
     try:
         return jsonify({
             "success": True,
-            "config": config
+            "config": config_manager.public_config()
         })
     except Exception as e:
         logger.error(f"Error getting config: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/config/save', methods=['POST'])
 def save_config_api():
-    """Сохранить конфигурацию через API"""
+    """Сохранить список камер через API (с валидацией)"""
     try:
-        new_config = request.json
+        new_config = request.get_json(silent=True)
         
-        if not new_config:
+        if not isinstance(new_config, dict) or 'cameras' not in new_config:
             return jsonify({"success": False, "error": "No configuration data provided"}), 400
         
-        # Обновляем глобальную конфигурацию
-        global config
-        config = new_config
+        ok, error = config_manager.replace_cameras(new_config['cameras'])
+        if not ok:
+            return jsonify({"success": False, "error": error}), 400
         
-        # Сохраняем в файл
-        if save_config():
-            # Обновляем уровень логирования если изменился
-            level = config.get('logging', {}).get('level', 'INFO')
-            logger.setLevel(getattr(logging, level))
-            
-            logger.info("✅ Configuration saved via API")
-            return jsonify({"success": True})
-        else:
-            return jsonify({"success": False, "error": "Failed to save config file"}), 500
+        logger.info("✅ Configuration saved via API")
+        return jsonify({"success": True})
             
     except Exception as e:
         logger.error(f"❌ Failed to save config via API: {e}")
-        logger.exception(e)
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/config/reload', methods=['POST'])
 def reload_config_api():
     """Перезагрузить конфигурацию из файла"""
     try:
-        load_config()
+        config_manager.load_config()
         logger.info("✅ Configuration reloaded from file")
         return jsonify({"success": True})
     except Exception as e:
         logger.error(f"❌ Failed to reload config: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/config/camera/<camera_ip>', methods=['GET', 'POST'])
@@ -1366,148 +1413,95 @@ def camera_config_api(camera_ip):
     """Получить или обновить конфигурацию конкретной камеры"""
     try:
         if request.method == 'GET':
-            # Получить конфигурацию камеры
-            cam_config = get_camera_config(camera_ip)
+            cam_config = config_manager.get_camera(camera_ip)
             if cam_config:
                 return jsonify({
                     "success": True,
-                    "camera": cam_config
+                    "camera": config_manager.mask_camera(cam_config)
                 })
-            else:
-                return jsonify({
-                    "success": False,
-                    "error": f"Camera {camera_ip} not found"
-                }), 404
+            return jsonify({
+                "success": False,
+                "error": f"Camera {camera_ip} not found"
+            }), 404
                 
-        elif request.method == 'POST':
-            # Обновить конфигурацию камеры
-            data = request.json
-            if not data:
-                return jsonify({"success": False, "error": "No data provided"}), 400
-            
-            # Находим камеру
-            for i, cam in enumerate(config['cameras']):
-                if cam['ip'] == camera_ip:
-                    # Обновляем поля
-                    for key, value in data.items():
-                        if key in cam:
-                            cam[key] = value
-                    
-                    # Сохраняем изменения
-                    if save_config():
-                        logger.info(f"✅ Camera {camera_ip} configuration updated")
-                        return jsonify({"success": True})
-                    else:
-                        return jsonify({"success": False, "error": "Failed to save config"}), 500
-            
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not data:
+            return jsonify({"success": False, "error": "No data provided"}), 400
+        
+        found, error = config_manager.update_camera_validated(camera_ip, data)
+        if not found:
             return jsonify({"success": False, "error": f"Camera {camera_ip} not found"}), 404
+        if error:
+            return jsonify({"success": False, "error": error}), 400
+        
+        logger.info(f"✅ Camera {camera_ip} configuration updated")
+        return jsonify({"success": True})
             
     except Exception as e:
         logger.error(f"Error in camera config API for {camera_ip}: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/config/cameras/bulk', methods=['POST'])
 def bulk_update_cameras():
     """Массовое обновление камер (для импорта)"""
     try:
-        data = request.json
-        if not data or 'cameras' not in data:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or 'cameras' not in data:
             return jsonify({"success": False, "error": "No cameras data provided"}), 400
         
-        # Обновляем список камер
-        config['cameras'] = data['cameras']
+        ok, error = config_manager.replace_cameras(data['cameras'])
+        if not ok:
+            return jsonify({"success": False, "error": error}), 400
         
-        # Сохраняем
-        if save_config():
-            logger.info(f"✅ Bulk updated {len(data['cameras'])} cameras")
-            return jsonify({"success": True})
-        else:
-            return jsonify({"success": False, "error": "Failed to save config"}), 500
+        logger.info(f"✅ Bulk updated {len(data['cameras'])} cameras")
+        return jsonify({"success": True})
             
     except Exception as e:
         logger.error(f"Error in bulk update: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/config/backup', methods=['POST'])
 def create_config_backup():
     """Создать резервную копию конфигурации"""
     try:
-        if os.path.exists(CONFIG_FILE):
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_file = f"{CONFIG_FILE}.{timestamp}.backup"
-            shutil.copy2(CONFIG_FILE, backup_file)
-            
-            logger.info(f"✅ Config backup created: {backup_file}")
-            return jsonify({
-                "success": True,
-                "backup": os.path.basename(backup_file)
-            })
-        else:
-            return jsonify({"success": False, "error": "Config file not found"}), 404
+        backup_name = config_manager._create_backup()
+        if backup_name:
+            return jsonify({"success": True, "backup": os.path.basename(backup_name)})
+        return jsonify({"success": False, "error": "Config file not found"}), 404
             
     except Exception as e:
         logger.error(f"Error creating config backup: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/config/restore/<backup_file>', methods=['POST'])
 def restore_config_backup(backup_file):
     """Восстановить конфигурацию из резервной копии"""
     try:
-        backup_path = os.path.join(os.path.dirname(CONFIG_FILE), backup_file)
-        
-        if not os.path.exists(backup_path):
-            return jsonify({"success": False, "error": "Backup file not found"}), 404
-        
-        # Создаем бэкап текущей конфигурации перед восстановлением
-        current_backup = f"{CONFIG_FILE}.before_restore.backup"
-        shutil.copy2(CONFIG_FILE, current_backup)
-        
-        # Восстанавливаем
-        shutil.copy2(backup_path, CONFIG_FILE)
-        
-        # Перезагружаем конфигурацию
-        load_config()
-        
-        logger.info(f"✅ Config restored from {backup_file}")
-        return jsonify({"success": True})
+        if config_manager.restore_backup(backup_file):
+            logger.info(f"✅ Config restored from {backup_file}")
+            return jsonify({"success": True})
+        return jsonify({"success": False, "error": "Backup not found or invalid"}), 404
         
     except Exception as e:
         logger.error(f"Error restoring config: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/config/backups', methods=['GET'])
 def list_config_backups():
     """Получить список резервных копий конфигурации"""
     try:
-        config_dir = os.path.dirname(CONFIG_FILE)
-        backups = []
-        
-        for file in os.listdir(config_dir):
-            if file.endswith('.backup'):
-                filepath = os.path.join(config_dir, file)
-                stat = os.stat(filepath)
-                backups.append({
-                    'name': file,
-                    'size': stat.st_size,
-                    'modified': stat.st_mtime * 1000,
-                    'created': datetime.fromtimestamp(stat.st_ctime).isoformat()
-                })
-        
-        # Сортируем по дате изменения (новые сверху)
-        backups.sort(key=lambda x: x['modified'], reverse=True)
-        
         return jsonify({
             "success": True,
-            "backups": backups
+            "backups": config_manager.list_backups()
         })
         
     except Exception as e:
         logger.error(f"Error listing backups: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/config/system', methods=['POST'])
@@ -1520,20 +1514,18 @@ def save_system_config():
         
         # Сохраняем настройки в конфиг
         if 'maxRecordings' in data:
-            # Здесь можно сохранить в config_manager
-            # Пока сохраняем в отдельный файл или в localStorage на клиенте
-            logger.info(f"System setting updated: maxRecordings = {data['maxRecordings']}")
-            
-            # Можно сохранить в config_manager.config
-            if 'system' not in config_manager.config:
-                config_manager.config['system'] = {}
-            config_manager.config['system']['max_recordings'] = data['maxRecordings']
+            try:
+                max_recordings = int(data['maxRecordings'])
+            except (TypeError, ValueError):
+                return jsonify({"success": False, "error": "Invalid maxRecordings"}), 400
+            logger.info(f"System setting updated: maxRecordings = {max_recordings}")
+            config_manager.set_max_recordings(max_recordings)
             config_manager.save_config()
         
         return jsonify({"success": True})
     except Exception as e:
         logger.error(f"Error saving system config: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 
@@ -1584,7 +1576,7 @@ def import_cameras_from_ha():
         
     except Exception as e:
         logger.error(f"❌ Error importing cameras: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/ha/cameras', methods=['GET'])
@@ -1603,10 +1595,15 @@ def get_ha_cameras_list():
             return jsonify({"success": False, "error": f"HTTP {response.status_code}"}), 500
         
         data = response.json()
+        # Пароли камер браузеру не отдаём
+        for cam in data.get('cameras', []) if isinstance(data, dict) else []:
+            if isinstance(cam, dict) and cam.get('password'):
+                cam['password'] = MASK
         return jsonify(data)
         
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"Error getting HA cameras: {e}")
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 # ==================== БЛОК 7: HLS STREAMING API ====================
@@ -1615,6 +1612,8 @@ def get_ha_cameras_list():
 @app.route('/api/video/hls/<stream_name>.m3u8')
 def serve_hls_playlist(stream_name):
     """Отдать HLS плейлист"""
+    if not safe_name(stream_name):
+        return "Not found", 404
     hls_dir = f"/tmp/hls/{stream_name}"
     playlist_path = f"{hls_dir}/playlist.m3u8"
     
@@ -1624,14 +1623,19 @@ def serve_hls_playlist(stream_name):
 
 @app.route('/api/video/hls/<stream_name>/<segment>')
 def serve_hls_segment(stream_name, segment):
-    """Отдать HLS сегмент"""
+    """Отдать HLS сегмент (только .ts/.m3u8)"""
+    if (not safe_name(stream_name) or not safe_name(segment)
+            or not segment.endswith(('.ts', '.m3u8'))):
+        return "Not found", 404
     return send_from_directory(f"/tmp/hls/{stream_name}", segment)
 
 @app.route('/api/video/start_hls/<camera_ip>', methods=['POST'])
 def start_hls_stream(camera_ip):
     """Запустить HLS трансляцию для камеры с использованием StreamManager"""
-    data = request.json or {}
+    data = request.get_json(silent=True) or {}
     stream_type = data.get('stream', 'main')
+    if stream_type not in ('main', 'sub'):
+        return jsonify({"error": "Invalid stream type"}), 400
     
     cam_config = config_manager.get_camera(camera_ip)
     if not cam_config:
@@ -1692,14 +1696,14 @@ def start_hls_stream(camera_ip):
                 "stats": manager.stats
             })
     else:
-        error_details = f"Process died. Last error: {manager.last_error}"
+        error_details = redact(f"Process died. Last error: {manager.last_error}")
         logger.error(f"❌ Failed to start HLS stream for {output_name}: {error_details}")
         
         # Читаем лог для диагностики
         log_tail = ""
         if os.path.exists(manager.log_file):
             with open(manager.log_file, 'r') as f:
-                log_tail = f.read()[-1000:]
+                log_tail = redact(f.read()[-1000:])
         
         return jsonify({
             "success": False,
@@ -1712,8 +1716,12 @@ def start_hls_stream(camera_ip):
 @app.route('/api/video/stop_hls/<camera_ip>', methods=['POST'])
 def stop_hls_stream(camera_ip):
     """Остановить HLS трансляцию"""
-    data = request.json or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
     stream_type = data.get('stream', 'main')
+    if stream_type not in ('main', 'sub'):
+        return jsonify({"success": False, "error": "Invalid stream type"}), 400
     output_name = f"{camera_ip}_{stream_type}"
     
     if output_name in stream_managers:
@@ -1754,8 +1762,12 @@ def list_stream_managers():
 @app.route('/api/video/restart_hls/<camera_ip>', methods=['POST'])
 def restart_hls_stream(camera_ip):
     """Принудительно перезапустить HLS трансляцию"""
-    data = request.json or {}
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        data = {}
     stream_type = data.get('stream', 'main')
+    if stream_type not in ('main', 'sub'):
+        return jsonify({"success": False, "error": "Invalid stream type"}), 400
     output_name = f"{camera_ip}_{stream_type}"
     
     if output_name in stream_managers:
@@ -1834,24 +1846,31 @@ def test_video_stream(camera_ip):
                 '-y', tmp.name
             ]
             
+            tmp_path = tmp.name
+        
+        try:
             result = subprocess.run(cmd, capture_output=True, timeout=10)
             
-            if result.returncode == 0 and os.path.exists(tmp.name):
-                with open(tmp.name, 'rb') as f:
+            if result.returncode == 0 and os.path.exists(tmp_path):
+                with open(tmp_path, 'rb') as f:
                     img_data = f.read()
-                os.unlink(tmp.name)
                 return Response(img_data, mimetype='image/jpeg')
             else:
-                error_msg = result.stderr.decode() if result.stderr else "Unknown error"
+                # stderr ffmpeg содержит RTSP URL с паролем
+                error_msg = redact(result.stderr.decode(errors='replace')) if result.stderr else "Unknown error"
                 return jsonify({
                     "error": "Failed to get snapshot",
                     "details": error_msg[:500]
                 }), 500
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
                 
     except subprocess.TimeoutExpired:
         return jsonify({"error": "Timeout"}), 500
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        logger.error(f"Video test failed: {type(e).__name__}")
+        return jsonify({"error": "Internal error"}), 500
 
 @app.route('/api/camera/test_endpoints/<camera_ip>')
 def test_camera_endpoints(camera_ip):
@@ -1860,8 +1879,8 @@ def test_camera_endpoints(camera_ip):
     if not cam_config:
         return jsonify({"error": "Camera not found"}), 404
     
-    username = cam_config.get('username', 'root')
-    password = cam_config.get('password', '12345')
+    username = cam_config.get('username', '')
+    password = cam_config.get('password', '')
     auth = (username, password)
     
     all_endpoints = [
@@ -1953,6 +1972,10 @@ def test_telegram():
         token = data.get('token')
         chat_id = data.get('chatId')
         
+        # Маска означает «использовать сохранённый токен»
+        if token == MASK:
+            token = None
+        
         # Если token не передан, пробуем взять из конфига
         if not token:
             token = config_manager.config.get('telegram', {}).get('bot_token')
@@ -1965,11 +1988,13 @@ def test_telegram():
         
         if not token:
             return jsonify({'success': False, 'error': 'Bot token not provided and not found in config'}), 400
+        if not isinstance(token, str) or not TELEGRAM_TOKEN_RE.match(token):
+            return jsonify({'success': False, 'error': 'Invalid bot token format'}), 400
             
         if not chat_id:
             return jsonify({'success': False, 'error': 'Chat ID not provided and not found in config'}), 400
-        
-        # Пробуем отправить тестовое сообщение
+        if not re.match(r'^(-?\d{1,20}|@[A-Za-z0-9_]{4,64})$', str(chat_id).strip()):
+            return jsonify({'success': False, 'error': 'Invalid chat ID'}), 400
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         payload = {
             'chat_id': str(chat_id).strip(),
@@ -2026,14 +2051,14 @@ def test_telegram():
         return jsonify({'success': False, 'error': error_msg}), 500
         
     except Exception as e:
-        error_msg = str(e)
-        logger.error(f"❌ Unexpected error in test_telegram: {error_msg}")
-        logger.exception(e)
+        # Исключение requests содержит URL с токеном бота — клиенту его не показываем
+        error_msg = "Unexpected error while contacting Telegram"
+        logger.error(f"❌ Unexpected error in test_telegram: {type(e).__name__}")
         telegram_history.appendleft({
             'time': datetime.now().strftime('%H:%M:%S'),
             'message': 'Тестовое сообщение',
             'status': 'error',
-            'details': error_msg[:100]
+            'details': error_msg
         })
         return jsonify({'success': False, 'error': error_msg}), 500
 
@@ -2048,7 +2073,7 @@ def get_telegram_history():
         })
     except Exception as e:
         logger.error(f"Error getting telegram history: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/config/telegram', methods=['POST'])
@@ -2062,13 +2087,34 @@ def save_telegram_config():
         # Убеждаемся, что секция telegram существует
         if 'telegram' not in config_manager.config:
             config_manager.config['telegram'] = {}
+        current = config_manager.config['telegram']
+        
+        # Токен: маска/пустое значение = оставить сохранённый
+        bot_token = data.get('bot_token')
+        if not bot_token or bot_token == MASK:
+            bot_token = current.get('bot_token', '')
+        elif not isinstance(bot_token, str) or not TELEGRAM_TOKEN_RE.match(bot_token):
+            return jsonify({'success': False, 'error': 'Invalid bot token format'}), 400
+        
+        chat_id = str(data.get('default_chat_id', current.get('chat_id', '')) or '').strip()
+        if chat_id and not re.match(r'^(-?\d{1,20}|@[A-Za-z0-9_]{4,64})$', chat_id):
+            return jsonify({'success': False, 'error': 'Invalid chat ID'}), 400
+        
+        video_quality = data.get('video_quality', current.get('video_quality', 'high'))
+        if video_quality not in TELEGRAM_VIDEO_QUALITIES:
+            return jsonify({'success': False, 'error': 'Invalid video quality'}), 400
+        
+        try:
+            max_size_mb = max(1, min(2000, int(data.get('max_size_mb', current.get('max_size_mb', 50)))))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid max_size_mb'}), 400
         
         # Обновляем настройки
-        config_manager.config['telegram'].update({
-            'bot_token': data.get('bot_token', config_manager.config['telegram'].get('bot_token', '')),
-            'chat_id': data.get('default_chat_id', config_manager.config['telegram'].get('chat_id', '')),
-            'video_quality': data.get('video_quality', config_manager.config['telegram'].get('video_quality', 'high')),
-            'max_size_mb': data.get('max_size_mb', config_manager.config['telegram'].get('max_size_mb', 50))
+        current.update({
+            'bot_token': bot_token,
+            'chat_id': chat_id,
+            'video_quality': video_quality,
+            'max_size_mb': max_size_mb
         })
         
         # Сохраняем конфигурацию
@@ -2088,35 +2134,40 @@ def save_telegram_config():
             return jsonify({'success': False, 'error': 'Failed to save config'}), 500
         
     except Exception as e:
-        logger.error(f"❌ Failed to save telegram config: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.error(f"❌ Failed to save telegram config: {type(e).__name__}")
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/telegram/send_video', methods=['POST'])
 def send_telegram_video():
     """Отправить видео в Telegram со сжатием"""
     try:
-        data = request.json
-        if not data:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
             return jsonify({'success': False, 'error': 'No JSON data provided'}), 400
             
-        video_path = data.get('video_path')
-        caption = data.get('caption', '')
+        caption = str(data.get('caption', ''))[:1024]
         chat_id = data.get('chat_id')
         quality = data.get('quality', config_manager.config.get('telegram', {}).get('video_quality', 'high'))
+        if quality not in TELEGRAM_VIDEO_QUALITIES:
+            return jsonify({'success': False, 'error': 'Invalid quality'}), 400
         
-        if not video_path or not os.path.exists(video_path):
+        # Только видеофайлы из медиа-каталога аддона
+        video_path = resolve_media_path(data.get('video_path'), VIDEO_EXTENSIONS)
+        if not video_path:
             return jsonify({'success': False, 'error': 'Video not found'}), 404
         
         bot_token = config_manager.config.get('telegram', {}).get('bot_token')
         if not bot_token:
             return jsonify({'success': False, 'error': 'Telegram bot not configured'}), 400
         
-        # Определяем chat_id
-        final_chat_id = chat_id or config_manager.config.get('telegram', {}).get('chat_id')
-        if not final_chat_id:
-            return jsonify({'success': False, 'error': 'No chat_id provided'}), 400
+        # Отправляем только в настроенный чат
+        configured_chat_id = config_manager.config.get('telegram', {}).get('chat_id')
+        if not configured_chat_id:
+            return jsonify({'success': False, 'error': 'No chat_id configured'}), 400
+        if chat_id and str(chat_id).strip() != str(configured_chat_id).strip():
+            return jsonify({'success': False, 'error': 'chat_id does not match configured chat'}), 403
+        final_chat_id = configured_chat_id
         
         # Проверяем размер файла
         file_size = os.path.getsize(video_path)
@@ -2179,19 +2230,19 @@ def send_telegram_video():
                     }), 400
                     
         except Exception as e:
-            logger.error(f"❌ Error sending video: {e}")
+            # Текст исключения requests содержит URL с токеном бота
+            logger.error(f"❌ Error sending video: {type(e).__name__}")
             telegram_history.appendleft({
                 'time': datetime.now().strftime('%H:%M:%S'),
                 'message': f"Видео: {os.path.basename(original_path)}",
                 'status': 'error',
-                'details': str(e)[:100]
+                'details': 'Send failed'
             })
-            return jsonify({'success': False, 'error': str(e)}), 500
+            return jsonify({'success': False, 'error': 'Failed to send video'}), 500
             
     except Exception as e:
-        logger.error(f"❌ Unexpected error in send_telegram_video: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        logger.error(f"❌ Unexpected error in send_telegram_video: {type(e).__name__}")
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 def compress_video(input_path, quality='medium'):
@@ -2264,20 +2315,23 @@ def compress_video(input_path, quality='medium'):
 def clear_debug():
     """Очистить отладочные снимки"""
     try:
-        debug_files = glob.glob("/config/www/qr_debug_*.jpg")
-        marked_files = glob.glob("/config/www/qr_marked_*.jpg")
+        debug_files = glob.glob(f"{DEBUG_DIR}/*_debug_*") + glob.glob(f"{DEBUG_DIR}/qr_marked_*.jpg")
+        # Остатки старых версий в публичной /config/www
+        legacy = glob.glob("/config/www/qr_debug_*.jpg") + glob.glob("/config/www/qr_marked_*.jpg")
         
-        for f in debug_files + marked_files:
+        removed = 0
+        for f in debug_files + legacy:
             try:
                 os.remove(f)
-            except:
+                removed += 1
+            except OSError:
                 pass
         
-        logger.info(f"✅ Cleared {len(debug_files) + len(marked_files)} debug images")
-        return jsonify({"success": True, "count": len(debug_files) + len(marked_files)})
+        logger.info(f"✅ Cleared {removed} debug files")
+        return jsonify({"success": True, "count": removed})
     except Exception as e:
         logger.error(f"Error clearing debug: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/qr/stats', methods=['GET'])
@@ -2290,7 +2344,7 @@ def qr_statistics():
         })
     except Exception as e:
         logger.error(f"Error getting QR stats: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/qr/debug', methods=['GET'])
@@ -2307,29 +2361,31 @@ def qr_debug():
         return jsonify({"success": True, "debug": []})
     except Exception as e:
         logger.error(f"Error reading QR debug: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/send_telegram_photo', methods=['POST'])
 def send_telegram_photo():
     """Отправить фото в Telegram"""
     try:
-        data = request.json
-        if not data:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
             return jsonify({"success": False, "error": "No JSON data"}), 400
             
         photo_base64 = data.get('photo')
-        caption = data.get('caption', 'QR-код')
+        caption = str(data.get('caption', 'QR-код'))[:1024]
         chat_id = data.get('chat_id')
         
-        if not photo_base64:
+        if not photo_base64 or not isinstance(photo_base64, str) or len(photo_base64) > 14 * 1024 * 1024:
             return jsonify({"success": False, "error": "No photo data"}), 400
         
-        if not chat_id:
-            chat_id = config_manager.config.get('telegram', {}).get('chat_id')
-        
-        if not chat_id:
+        # Отправляем только в настроенный чат
+        configured_chat_id = config_manager.config.get('telegram', {}).get('chat_id')
+        if not configured_chat_id:
             return jsonify({"success": False, "error": "No chat_id configured"}), 400
+        if chat_id and str(chat_id).strip() != str(configured_chat_id).strip():
+            return jsonify({"success": False, "error": "chat_id does not match configured chat"}), 403
+        chat_id = configured_chat_id
         
         bot_token = config_manager.config.get('telegram', {}).get('bot_token')
         if not bot_token:
@@ -2368,18 +2424,19 @@ def send_telegram_photo():
                 return jsonify({"success": False, "error": result.get('description', 'Unknown error')}), 400
                 
         except Exception as e:
-            logger.error(f"Error sending to Telegram: {e}")
+            # Текст исключения requests содержит URL с токеном бота
+            logger.error(f"Error sending to Telegram: {type(e).__name__}")
             telegram_history.appendleft({
                 'time': datetime.now().strftime('%H:%M:%S'),
                 'message': f"Фото: {caption[:30]}...",
                 'status': 'error',
-                'details': str(e)[:100]
+                'details': 'Send failed'
             })
-            return jsonify({"success": False, "error": str(e)}), 500
+            return jsonify({"success": False, "error": "Failed to send photo"}), 500
             
     except Exception as e:
-        logger.error(f"Unexpected error in send_telegram_photo: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"Unexpected error in send_telegram_photo: {type(e).__name__}")
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 # ===== ФУНКЦИИ ДЛЯ РАБОТЫ С КАМЕРАМИ =====
@@ -2395,8 +2452,8 @@ def capture_snapshot_from_camera(camera_ip: str) -> Optional[bytes]:
             return None
         
         camera_type = cam_config.get('type', 'openipc')
-        username = cam_config.get('username', 'root')
-        password = cam_config.get('password', '12345')
+        username = cam_config.get('username', '')
+        password = cam_config.get('password', '')
         
         # Специфичные эндпоинты для разных камер
         if camera_ip == "192.168.1.55":
@@ -2431,7 +2488,7 @@ def capture_snapshot_from_camera(camera_ip: str) -> Optional[bytes]:
                         # Сохраняем отладочный снимок для проблемных камер
                         if camera_ip == "192.168.1.55" and debug_counter % 10 == 0:
                             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                            debug_path = f"/config/www/snapshot_debug_{camera_ip}_{timestamp}.jpg"
+                            debug_path = f"{DEBUG_DIR}/snapshot_debug_{camera_ip}_{timestamp}.jpg"
                             try:
                                 with open(debug_path, 'wb') as f:
                                     f.write(data)
@@ -2512,7 +2569,7 @@ def scan_qr_from_image(image_bytes: bytes) -> Optional[Dict]:
                     cv2.polylines(img, [pts], True, (0, 255, 0), 3)
                     
                     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                    marked_path = f"/config/www/qr_marked_{timestamp}.jpg"
+                    marked_path = f"{DEBUG_DIR}/qr_marked_{timestamp}.jpg"
                     cv2.imwrite(marked_path, img)
                     logger.info(f"💾 Marked image saved: {marked_path}")
             except Exception as e:
@@ -2661,25 +2718,44 @@ def start_scan():
     """Запуск непрерывного сканирования QR для камеры"""
     try:
         state["requests"] += 1
-        data = request.json
+        data = request.get_json(silent=True)
         
-        if not data:
+        if not isinstance(data, dict):
             return jsonify({"success": False, "error": "No JSON data"}), 400
             
         camera_id = data.get('camera_id')
-        expected_code = data.get('expected_code', 'a4625vol')
-        timeout = data.get('timeout', 300)
+        expected_code = data.get('expected_code')
         
-        if not camera_id:
+        try:
+            timeout = max(5, min(900, int(data.get('timeout', 300))))
+        except (TypeError, ValueError):
+            return jsonify({"success": False, "error": "Invalid timeout"}), 400
+        
+        if not camera_id or not isinstance(camera_id, str):
             return jsonify({"success": False, "error": "No camera_id provided"}), 400
+        
+        # Пустой/отсутствующий ожидаемый код делал бы любое QR «правильным»
+        if not isinstance(expected_code, str) or not expected_code.strip() or len(expected_code) > 256:
+            return jsonify({"success": False, "error": "expected_code is required"}), 400
         
         cam_config = get_camera_config(camera_id)
         if not cam_config:
-            logger.warning(f"⚠️ No configuration found for camera {camera_id}, using defaults")
+            logger.warning(f"⚠️ No configuration found for camera {camera_id}")
+            return jsonify({"success": False, "error": "Camera not found"}), 404
+        
+        running = sum(1 for job in scan_jobs.values() if job.get("status") in ("starting", "running"))
+        if running >= MAX_ACTIVE_SCANS:
+            return jsonify({"success": False, "error": "Too many active scans"}), 429
+        
+        # Завершённые задачи старше часа не нужны: иначе словарь растёт бесконечно
+        stale_before = time.time() - 3600
+        for old_id in [sid for sid, job in scan_jobs.items()
+                       if job.get("status") not in ("starting", "running")
+                       and job.get("end_time", job.get("start_time", 0)) < stale_before]:
+            scan_jobs.pop(old_id, None)
         
         logger.info(f"🎯 Starting continuous scan for {camera_id}")
-        logger.info(f"🎯 Expected code: {expected_code}")
-        write_qr_debug(f"🎯 Starting continuous scan for {camera_id} with expected code: {expected_code}")
+        write_qr_debug(f"🎯 Starting continuous scan for {camera_id}")
         
         scan_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         
@@ -2709,7 +2785,7 @@ def start_scan():
         
     except Exception as e:
         logger.error(f"Error starting scan: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/scan_status/<scan_id>', methods=['GET'])
@@ -2731,7 +2807,7 @@ def scan_status(scan_id):
         
     except Exception as e:
         logger.error(f"Error getting scan status: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/stop_scan/<scan_id>', methods=['POST'])
@@ -2751,7 +2827,7 @@ def stop_scan(scan_id):
         
     except Exception as e:
         logger.error(f"Error stopping scan: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/barcode', methods=['POST'])
@@ -2761,17 +2837,20 @@ def barcode():
         state["requests"] += 1
         qr_stats["total_requests"] += 1
         
-        data = request.json
+        data = request.get_json(silent=True)
         
-        if not data:
+        if not isinstance(data, dict):
             return jsonify({"success": False, "error": "No JSON data"}), 400
         
         image_data = data.get('image', '')
-        camera_id = data.get('camera_id', 'unknown')
+        camera_id = str(data.get('camera_id', 'unknown'))[:64]
         
         if not image_data:
             qr_stats["failed_scans"] += 1
             return jsonify({"success": False, "error": "No image data"}), 400
+        if not isinstance(image_data, str) or len(image_data) > 14 * 1024 * 1024:
+            qr_stats["failed_scans"] += 1
+            return jsonify({"success": False, "error": "Invalid image data"}), 400
         
         start_time = time.time()
         
@@ -2785,7 +2864,7 @@ def barcode():
                 logger.info(f"Decoded {len(img_bytes)} bytes")
             except Exception as e:
                 qr_stats["failed_scans"] += 1
-                return jsonify({"success": False, "error": f"Base64 decode failed: {e}"}), 400
+                return jsonify({"success": False, "error": "Base64 decode failed"}), 400
             
             nparr = np.frombuffer(img_bytes, np.uint8)
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -2867,11 +2946,11 @@ def barcode():
         except Exception as e:
             qr_stats["failed_scans"] += 1
             logger.error(f"Barcode error: {e}")
-            return jsonify({"success": False, "error": str(e)}), 500
+            return jsonify({"success": False, "error": "Barcode processing failed"}), 500
             
     except Exception as e:
         logger.error(f"Unexpected error in barcode: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 @app.route('/api/camera/<path:camera_id>/barcode', methods=['POST'])
@@ -2884,55 +2963,49 @@ def camera_barcode(camera_id):
         return barcode()
     except Exception as e:
         logger.error(f"Error in camera_barcode: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 
 # ==================== БЛОК 10: TTS API ====================
 
 @app.route('/api/tts', methods=['POST'])
-def tts():
+def tts(camera_id_override=None):
     state["requests"] += 1
-    data = request.json
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "No JSON data"}), 400
     
-    camera_id = data.get('camera_id')
+    camera_id = camera_id_override or data.get('camera_id')
     text = data.get('text', '')
     lang = data.get('lang', 'ru')
     provider = data.get('provider', config['tts']['provider'])
     
-    logger.info(f"TTS request: camera={camera_id}, text={text}, provider={provider}")
-    
-    if not camera_id or not text:
+    if not camera_id or not isinstance(camera_id, str) or not text or not isinstance(text, str):
         return jsonify({"success": False, "error": "Missing camera_id or text"}), 400
+    if len(text) > MAX_TTS_TEXT_LENGTH:
+        return jsonify({"success": False, "error": "Text too long"}), 400
+    if not valid_lang(lang):
+        return jsonify({"success": False, "error": "Invalid lang"}), 400
+    if provider not in TTS_PROVIDERS:
+        return jsonify({"success": False, "error": "Invalid provider"}), 400
     
-    # Получаем конфигурацию камеры
+    logger.info(f"TTS request: camera={camera_id}, chars={len(text)}, provider={provider}")
+    
+    # Получаем конфигурацию камеры (неизвестные камеры не принимаем: нет «угадывания» IP и паролей)
     cam_config = get_camera_config(camera_id)
     if not cam_config:
         cam_config = get_camera_config_by_name(camera_id)
+    if not cam_config:
+        return jsonify({"success": False, "error": "Camera not found"}), 404
     
-    if cam_config:
-        camera_ip = cam_config['ip']
-        camera_type = cam_config['type']
-        username = cam_config['username']
-        password = cam_config['password']
-        tts_format = cam_config.get('tts_format', 'pcm' if camera_type == 'openipc' else 'alaw')
-        tts_endpoint = cam_config.get('tts_endpoint', '/cgi-bin/audio/transmit.cgi' if camera_type == 'beward' else '/play_audio')
-    else:
-        # Fallback на старую логику
-        if camera_id == '192.168.1.10' or 'beward' in str(camera_id).lower():
-            camera_type = 'beward'
-            username = 'admin'
-            password = 'Q96811621w'
-            camera_ip = '192.168.1.10'
-            tts_format = 'alaw'
-            tts_endpoint = '/cgi-bin/audio/transmit.cgi'
-        else:
-            camera_type = 'openipc'
-            username = 'root'
-            password = '12345'
-            ip_match = re.search(r'(\d+\.\d+\.\d+\.\d+)', camera_id)
-            camera_ip = ip_match.group(1) if ip_match else '192.168.1.4'
-            tts_format = 'pcm'
-            tts_endpoint = '/play_audio'
+    camera_ip = cam_config['ip']
+    camera_type = cam_config['type']
+    username = cam_config['username']
+    password = cam_config['password']
+    tts_format = cam_config.get('tts_format', 'pcm' if camera_type == 'openipc' else 'alaw')
+    tts_endpoint = cam_config.get('tts_endpoint', '/cgi-bin/audio/transmit.cgi' if camera_type == 'beward' else '/play_audio')
+    if not config_manager._valid_endpoint(tts_endpoint):
+        return jsonify({"success": False, "error": "Invalid TTS endpoint in camera config"}), 400
     
     camera_data = {
         "ip": camera_ip,
@@ -2952,9 +3025,7 @@ def tts():
 @app.route('/api/camera/<path:camera_id>/tts', methods=['POST'])
 def camera_tts(camera_id):
     logger.info(f"Camera TTS endpoint called for: {camera_id}")
-    data = request.json or {}
-    data['camera_id'] = camera_id
-    return tts()
+    return tts(camera_id_override=camera_id)
 
 
 def _tts_for_beward(camera, text, lang):
@@ -2990,7 +3061,7 @@ def _tts_for_beward(camera, text, lang):
         
         # Сохраняем копию для отладки
         if debug_counter % 5 == 0:
-            debug_audio_path = f"/config/www/tts_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.alaw"
+            debug_audio_path = f"{DEBUG_DIR}/tts_debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.alaw"
             try:
                 shutil.copy2(alaw_path, debug_audio_path)
                 logger.info(f"💾 Debug audio saved to {debug_audio_path}")
@@ -3013,24 +3084,17 @@ def _tts_for_beward(camera, text, lang):
         }
         
         logger.debug(f"Sending to {url}")
-        logger.debug(f"Headers: {headers}")
         
         # Отправляем POST запрос
         response = requests.post(url, headers=headers, data=audio_data, timeout=10)
         
         logger.info(f"Response status: {response.status_code}")
-        logger.debug(f"Response headers: {response.headers}")
         
         if response.status_code == 200:
             logger.info(f"✅ TTS sent successfully to Beward")
             return jsonify({"success": True})
         else:
             logger.error(f"❌ TTS failed: HTTP {response.status_code}")
-            try:
-                error_text = response.text
-                logger.error(f"Response body: {error_text[:200]}")
-            except:
-                pass
             return jsonify({"success": False, "error": f"HTTP {response.status_code}"}), 500
             
     except subprocess.TimeoutExpired:
@@ -3038,8 +3102,7 @@ def _tts_for_beward(camera, text, lang):
         return jsonify({"success": False, "error": "TTS generation timeout"}), 500
     except Exception as e:
         logger.error(f"TTS error: {e}")
-        logger.exception(e)
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "TTS failed"}), 500
     finally:
         # Очищаем временный файл
         if os.path.exists(alaw_path):
@@ -3088,7 +3151,7 @@ def _tts_for_openipc(camera, text, lang, provider='google'):
         logger.info(f"Generated {len(audio_data)} bytes of PCM audio")
         
         # Сохраняем копию для отладки
-        debug_audio_path = f"/config/www/tts_debug_{provider}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pcm"
+        debug_audio_path = f"{DEBUG_DIR}/tts_debug_{provider}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pcm"
         try:
             shutil.copy2(pcm_path, debug_audio_path)
             logger.info(f"💾 Debug audio saved to {debug_audio_path}")
@@ -3177,7 +3240,9 @@ def get_camera_osd_config(camera_ip):
 @app.route('/api/osd/camera/<path:camera_ip>/region/<int:region>', methods=['POST'])
 def set_osd_region(camera_ip, region):
     """Установить параметры региона OSD"""
-    data = request.json
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "No parameters"}), 400
     
     cam_config = get_camera_config(camera_ip)
     if not cam_config:
@@ -3186,6 +3251,13 @@ def set_osd_region(camera_ip, region):
     osd_port = cam_config.get('osd', {}).get('port', 9000)
     auth = (cam_config['username'], cam_config['password'])
     
+    def q(value):
+        return requests.utils.quote(str(value), safe='')
+    
+    def hex_color(value):
+        value = str(value).lstrip('#')
+        return value if re.fullmatch(r'[0-9A-Fa-f]{6,8}', value) else None
+    
     params = []
     
     if 'text' in data:
@@ -3193,39 +3265,36 @@ def set_osd_region(camera_ip, region):
         if text == "":
             params.append("text=")
         else:
-            params.append(f"text={requests.utils.quote(text)}")
+            params.append(f"text={q(text)}")
     
     if 'color' in data:
-        color = data['color'].replace('#', '')
+        color = hex_color(data['color'])
+        if not color:
+            return jsonify({"success": False, "error": "Invalid color"}), 400
         params.append(f"color=%23{color}")
     
-    if 'size' in data:
-        params.append(f"size={data['size']}")
-    
-    if 'posx' in data:
-        params.append(f"posx={data['posx']}")
-    
-    if 'posy' in data:
-        params.append(f"posy={data['posy']}")
-    
-    if 'opacity' in data:
-        params.append(f"opacity={data['opacity']}")
-    
-    if 'font' in data:
-        params.append(f"font={data['font']}")
-    
     if 'outline' in data:
-        outline = data['outline'].replace('#', '')
+        outline = hex_color(data['outline'])
+        if not outline:
+            return jsonify({"success": False, "error": "Invalid outline color"}), 400
         params.append(f"outl=%23{outline}")
     
-    if 'thickness' in data:
-        params.append(f"thick={data['thickness']}")
+    for field, name in (('size', 'size'), ('posx', 'posx'), ('posy', 'posy'),
+                        ('opacity', 'opacity'), ('thickness', 'thick')):
+        if field in data:
+            try:
+                params.append(f"{name}={int(data[field])}")
+            except (TypeError, ValueError):
+                return jsonify({"success": False, "error": f"Invalid {field}"}), 400
+    
+    if 'font' in data:
+        params.append(f"font={q(data['font'])}")
     
     if not params:
         return jsonify({"success": False, "error": "No parameters"}), 400
     
     url = f"http://{camera_ip}:{osd_port}/api/osd/{region}?{'&'.join(params)}"
-    logger.info(f"Setting OSD region {region}: {url}")
+    logger.info(f"Setting OSD region {region} on {camera_ip}")
     
     try:
         response = requests.get(url, auth=auth, timeout=5)
@@ -3235,7 +3304,8 @@ def set_osd_region(camera_ip, region):
             "response": response.text
         })
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"OSD request failed: {type(e).__name__}")
+        return jsonify({"success": False, "error": "Camera request failed"}), 500
 
 @app.route('/api/osd/camera/<path:camera_ip>/region/<int:region>/clear', methods=['POST'])
 def clear_osd_region(camera_ip, region):
@@ -3256,13 +3326,16 @@ def clear_osd_region(camera_ip, region):
             "status": response.status_code
         })
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"OSD request failed: {type(e).__name__}")
+        return jsonify({"success": False, "error": "Camera request failed"}), 500
 
 @app.route('/api/osd/camera/<path:camera_ip>/time', methods=['POST'])
 def set_osd_time_format(camera_ip):
     """Установить формат времени для $t"""
-    data = request.json
-    time_format = data.get('format', '%d.%m.%Y %H:%M:%S')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "No JSON data"}), 400
+    time_format = str(data.get('format', '%d.%m.%Y %H:%M:%S'))[:64]
     
     cam_config = get_camera_config(camera_ip)
     if not cam_config:
@@ -3271,7 +3344,7 @@ def set_osd_time_format(camera_ip):
     osd_port = cam_config.get('osd', {}).get('port', 9000)
     auth = (cam_config['username'], cam_config['password'])
     
-    escaped_format = time_format.replace('%', '%25')
+    escaped_format = requests.utils.quote(time_format, safe='')
     url = f"http://{camera_ip}:{osd_port}/api/time?fmt={escaped_format}"
     
     try:
@@ -3282,18 +3355,35 @@ def set_osd_time_format(camera_ip):
             "format": time_format
         })
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"OSD request failed: {type(e).__name__}")
+        return jsonify({"success": False, "error": "Camera request failed"}), 500
 
 @app.route('/api/osd/camera/<path:camera_ip>/logo', methods=['POST'])
 def upload_osd_logo(camera_ip):
     """Загрузить логотип в OSD"""
-    data = request.json
-    region = data.get('region', 0)
-    logo_path = data.get('logo_path')
-    posx = data.get('posx', 10)
-    posy = data.get('posy', 10)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"success": False, "error": "No JSON data"}), 400
+    try:
+        region = int(data.get('region', 0))
+        posx = int(data.get('posx', 10))
+        posy = int(data.get('posy', 10))
+    except (TypeError, ValueError):
+        return jsonify({"success": False, "error": "Invalid region or position"}), 400
     
-    if not logo_path or not os.path.exists(logo_path):
+    # Логотипы берутся только из каталога логотипов (или /config/www), и только картинки
+    logo_path = None
+    raw_logo = data.get('logo_path')
+    if isinstance(raw_logo, str):
+        for base in (LOGO_DIR, security.LEGACY_WWW):
+            if not raw_logo.startswith(base + '/'):
+                continue
+            candidate = resolve_within(base, raw_logo[len(base) + 1:])
+            if candidate and os.path.isfile(candidate) and candidate.lower().endswith(LOGO_EXTENSIONS):
+                logo_path = candidate
+                break
+    
+    if not logo_path:
         return jsonify({"success": False, "error": "Logo file not found"}), 404
     
     cam_config = get_camera_config(camera_ip)
@@ -3315,7 +3405,8 @@ def upload_osd_logo(camera_ip):
             "status": response.status_code
         })
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"OSD logo upload failed: {type(e).__name__}")
+        return jsonify({"success": False, "error": "Camera request failed"}), 500
 
 
 # ==================== БЛОК 12: ФАЙЛОВЫЙ МЕНЕДЖЕР API ====================
@@ -3329,13 +3420,14 @@ def list_files():
             filepath = os.path.join(WORKING_DIR, filename)
             if os.path.isfile(filepath):
                 ext = os.path.splitext(filename)[1]
-                if ext in ALLOWED_EXTENSIONS or filename == 'server.py':
+                if ext in ALLOWED_EXTENSIONS:
                     stat = os.stat(filepath)
                     files.append({
                         "name": filename,
                         "size": stat.st_size,
                         "modified": stat.st_mtime * 1000,  # в миллисекундах для JS
-                        "ext": ext
+                        "ext": ext,
+                        "readonly": ext not in WRITABLE_EXTENSIONS
                     })
         
         # Сортируем по имени
@@ -3343,18 +3435,17 @@ def list_files():
         
         return jsonify({"success": True, "files": files})
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"Error listing files: {e}")
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 @app.route('/api/files/get/<path:filename>')
 def get_file(filename):
     """Получить содержимое файла"""
     try:
-        # Защита от directory traversal
-        if '..' in filename or filename.startswith('/'):
+        filepath = resolve_app_file(filename)
+        if not filepath:
             return jsonify({"success": False, "error": "Invalid filename"}), 400
-        
-        filepath = os.path.join(WORKING_DIR, filename)
-        if not os.path.exists(filepath):
+        if not os.path.isfile(filepath):
             return jsonify({"success": False, "error": "File not found"}), 404
         
         with open(filepath, 'r', encoding='utf-8') as f:
@@ -3362,45 +3453,47 @@ def get_file(filename):
         
         return jsonify({"success": True, "content": content})
     except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+        logger.error(f"Error reading file: {e}")
+        return jsonify({"success": False, "error": "Internal error"}), 500
+
+def _backup_app_file(filepath):
+    """Скопировать файл в WORKING_DIR/backups, вернуть имя копии"""
+    backup_dir = os.path.join(WORKING_DIR, 'backups')
+    os.makedirs(backup_dir, exist_ok=True)
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_name = f"{os.path.basename(filepath)}.{timestamp}.backup"
+    shutil.copy2(filepath, os.path.join(backup_dir, backup_name))
+    return backup_name
 
 @app.route('/api/files/save', methods=['POST'])
 def save_file():
     """Сохранить содержимое файла"""
     try:
-        data = request.json
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({"success": False, "error": "Missing filename or content"}), 400
         filename = data.get('filename')
         content = data.get('content')
         
-        if not filename or content is None:
+        if not filename or not isinstance(content, str):
             return jsonify({"success": False, "error": "Missing filename or content"}), 400
         
-        # Защита от directory traversal
-        if '..' in filename or filename.startswith('/'):
-            return jsonify({"success": False, "error": "Invalid filename"}), 400
-        
-        filepath = os.path.join(WORKING_DIR, filename)
+        filepath = resolve_app_file(filename, writable=True)
+        if not filepath:
+            return jsonify({"success": False, "error": "Invalid or read-only file"}), 400
         
         # Создаем бэкап автоматически
         if os.path.exists(filepath):
-            backup_dir = os.path.join(WORKING_DIR, 'backups')
-            os.makedirs(backup_dir, exist_ok=True)
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_name = f"{filename}.{timestamp}.backup"
-            backup_path = os.path.join(backup_dir, backup_name)
-            
-            shutil.copy2(filepath, backup_path)
-            logger.info(f"✅ Created backup: {backup_name}")
+            logger.info(f"✅ Created backup: {_backup_app_file(filepath)}")
         
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
         
-        logger.info(f"✅ Saved file: {filename}")
+        logger.info(f"✅ Saved file: {os.path.basename(filepath)}")
         return jsonify({"success": True})
     except Exception as e:
         logger.error(f"Error saving file: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 @app.route('/api/files/upload', methods=['POST'])
 def upload_file():
@@ -3413,82 +3506,54 @@ def upload_file():
         if file.filename == '':
             return jsonify({"success": False, "error": "Empty filename"}), 400
         
-        filename = file.filename
-        
-        # Проверка расширения
-        ext = os.path.splitext(filename)[1]
-        if ext not in ALLOWED_EXTENSIONS and filename != 'server.py':
-            return jsonify({"success": False, "error": f"File type {ext} not allowed"}), 400
-        
-        # Защита от directory traversal
-        if '..' in filename or filename.startswith('/'):
-            return jsonify({"success": False, "error": "Invalid filename"}), 400
-        
-        filepath = os.path.join(WORKING_DIR, filename)
+        filepath = resolve_app_file(file.filename, writable=True)
+        if not filepath:
+            return jsonify({"success": False, "error": "Invalid or read-only file"}), 400
         
         # Создаем бэкап если файл существует
         if os.path.exists(filepath):
-            backup_dir = os.path.join(WORKING_DIR, 'backups')
-            os.makedirs(backup_dir, exist_ok=True)
-            
-            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            backup_name = f"{filename}.{timestamp}.backup"
-            backup_path = os.path.join(backup_dir, backup_name)
-            
-            shutil.copy2(filepath, backup_path)
-            logger.info(f"✅ Created backup before upload: {backup_name}")
+            logger.info(f"✅ Created backup before upload: {_backup_app_file(filepath)}")
         
         file.save(filepath)
-        logger.info(f"✅ Uploaded file: {filename}")
+        logger.info(f"✅ Uploaded file: {os.path.basename(filepath)}")
         
         return jsonify({"success": True})
     except Exception as e:
         logger.error(f"Error uploading file: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 @app.route('/api/files/download/<path:filename>')
 def download_file(filename):
     """Скачать файл"""
     try:
-        # Защита от directory traversal
-        if '..' in filename or filename.startswith('/'):
+        filepath = resolve_app_file(filename)
+        if not filepath:
             return "Invalid filename", 400
-        
-        filepath = os.path.join(WORKING_DIR, filename)
-        if not os.path.exists(filepath):
+        if not os.path.isfile(filepath):
             return "File not found", 404
         
-        return send_from_directory(WORKING_DIR, filename, as_attachment=True)
+        return send_from_directory(WORKING_DIR, os.path.relpath(filepath, os.path.realpath(WORKING_DIR)), as_attachment=True)
     except Exception as e:
         logger.error(f"Error downloading file: {e}")
-        return str(e), 500
+        return "Internal error", 500
 
 @app.route('/api/files/backup/<path:filename>', methods=['POST'])
 def backup_file(filename):
     """Создать резервную копию файла"""
     try:
-        # Защита от directory traversal
-        if '..' in filename or filename.startswith('/'):
+        filepath = resolve_app_file(filename)
+        if not filepath:
             return jsonify({"success": False, "error": "Invalid filename"}), 400
-        
-        filepath = os.path.join(WORKING_DIR, filename)
-        if not os.path.exists(filepath):
+        if not os.path.isfile(filepath):
             return jsonify({"success": False, "error": "File not found"}), 404
         
-        backup_dir = os.path.join(WORKING_DIR, 'backups')
-        os.makedirs(backup_dir, exist_ok=True)
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        backup_name = f"{filename}.{timestamp}.backup"
-        backup_path = os.path.join(backup_dir, backup_name)
-        
-        shutil.copy2(filepath, backup_path)
+        backup_name = _backup_app_file(filepath)
         logger.info(f"✅ Created backup: {backup_name}")
         
         return jsonify({"success": True, "backup": backup_name})
     except Exception as e:
         logger.error(f"Error creating backup: {e}")
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "error": "Internal error"}), 500
 
 @app.route('/api/translations/<lang>')
 def get_translations(lang):
@@ -3506,7 +3571,7 @@ def list_snapshots():
     """Получить список всех снимков"""
     try:
         snapshots = []
-        snapshots_dir = '/config/www/snapshots'
+        snapshots_dir = SNAPSHOTS_DIR
         
         logger.info(f"Scanning for snapshots in {snapshots_dir}")
         
@@ -3521,20 +3586,17 @@ def list_snapshots():
                     stat = os.stat(filepath)
                     
                     # Извлекаем информацию из пути
-                    rel_path = filepath.replace('/config/www/', '')
-                    url = f"/{rel_path}"
+                    rel_path = os.path.relpath(filepath, SNAPSHOTS_DIR)
+                    url = f"/snapshots/{rel_path}"
                     
-                    # Парсим путь для получения информации
-                    # Пример пути: /config/www/snapshots/2026-03-16/192_168_1_4/manual/15-30-22.jpg
-                    path_parts = root.split('/')
+                    # Путь: <SNAPSHOTS_DIR>/2026-03-16/192_168_1_4/manual/15-30-22.jpg
+                    path_parts = os.path.relpath(root, SNAPSHOTS_DIR).split(os.sep)
                     date = 'unknown'
                     camera = 'unknown'
                     snap_type = 'unknown'
                     
-                    if len(path_parts) >= 5:
-                        date = path_parts[-3]
-                        camera = path_parts[-2]
-                        snap_type = path_parts[-1]
+                    if len(path_parts) == 3:
+                        date, camera, snap_type = path_parts
                     
                     # Получаем имя камеры из конфига если возможно
                     camera_name = camera
@@ -3571,16 +3633,36 @@ def list_snapshots():
         
     except Exception as e:
         logger.error(f"❌ Error listing snapshots: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
+
+
+def resolve_snapshot_path(path):
+    """URL /snapshots/..., путь в MEDIA_ROOT или старый /config/www/snapshots -> файл внутри SNAPSHOTS_DIR"""
+    if not isinstance(path, str) or '\x00' in path:
+        return None
+    for prefix in ('/snapshots/', f"{security.MEDIA_ROOT}/snapshots/", f"{security.LEGACY_WWW}/snapshots/"):
+        if path.startswith(prefix):
+            target = resolve_within(SNAPSHOTS_DIR, path[len(prefix):])
+            if target and os.path.isfile(target) and target.lower().endswith(SNAPSHOT_EXTENSIONS):
+                return target
+            return None
+    return None
+
+
+def remove_snapshot_thumbnail(filepath):
+    base, ext = os.path.splitext(filepath)
+    thumb_path = f"{base}_thumb{ext}"
+    if os.path.isfile(thumb_path):
+        os.remove(thumb_path)
+        logger.debug(f"Deleted thumbnail: {thumb_path}")
 
 
 @app.route('/api/snapshots/delete', methods=['POST'])
 def delete_snapshot():
     """Удалить снимок"""
     try:
-        data = request.json
-        if not data:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
             return jsonify({'success': False, 'error': 'No data provided'}), 400
             
         path = data.get('path')
@@ -3588,60 +3670,37 @@ def delete_snapshot():
         if not path:
             return jsonify({'success': False, 'error': 'No path provided'}), 400
         
-        # Преобразуем URL в путь к файлу
-        # URL вида: /snapshots/2026-03-16/192_168_1_4/manual/15-30-22.jpg
-        # Преобразуем в: /config/www/snapshots/2026-03-16/192_168_1_4/manual/15-30-22.jpg
-        if path.startswith('/snapshots/'):
-            filepath = path.replace('/snapshots/', '/config/www/snapshots/')
-        else:
-            filepath = path.replace('/config/www/', '')
-            filepath = os.path.join('/config/www', filepath)
-        
-        logger.info(f"Attempting to delete snapshot: {filepath}")
-        
-        if not os.path.exists(filepath):
-            logger.warning(f"Snapshot file not found: {filepath}")
+        # Путь обязан оставаться внутри каталога снимков (после нормализации и symlink-ов)
+        filepath = resolve_snapshot_path(path)
+        if not filepath:
+            logger.warning(f"Rejected snapshot delete request: {path!r}")
             return jsonify({'success': False, 'error': 'File not found'}), 404
-        
-        # Проверяем, что файл находится в директории snapshots (безопасность)
-        if not filepath.startswith('/config/www/snapshots/'):
-            logger.error(f"Security violation: Attempt to delete file outside snapshots directory: {filepath}")
-            return jsonify({'success': False, 'error': 'Invalid file path'}), 403
         
         os.remove(filepath)
         logger.info(f"✅ Deleted snapshot: {filepath}")
-        
-        # Также удаляем thumbnail если есть
-        thumb_path = filepath.replace('.jpg', '_thumb.jpg').replace('.png', '_thumb.png')
-        if os.path.exists(thumb_path):
-            os.remove(thumb_path)
-            logger.debug(f"Deleted thumbnail: {thumb_path}")
+        remove_snapshot_thumbnail(filepath)
         
         return jsonify({'success': True})
         
     except Exception as e:
         logger.error(f"❌ Error deleting snapshot: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/snapshots/info', methods=['POST'])
 def get_snapshot_info():
     """Получить детальную информацию о снимке"""
     try:
-        data = request.json
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            return jsonify({'success': False, 'error': 'No path provided'}), 400
         path = data.get('path')
         
         if not path:
             return jsonify({'success': False, 'error': 'No path provided'}), 400
         
-        # Преобразуем URL в путь к файлу
-        if path.startswith('/snapshots/'):
-            filepath = path.replace('/snapshots/', '/config/www/snapshots/')
-        else:
-            filepath = path
-        
-        if not os.path.exists(filepath):
+        filepath = resolve_snapshot_path(path)
+        if not filepath:
             return jsonify({'success': False, 'error': 'File not found'}), 404
         
         stat = os.stat(filepath)
@@ -3659,15 +3718,13 @@ def get_snapshot_info():
             logger.debug(f"Failed to get image size: {e}")
         
         # Получаем информацию из пути
-        path_parts = filepath.split('/')
+        path_parts = os.path.relpath(filepath, SNAPSHOTS_DIR).split(os.sep)
         date = 'unknown'
         camera = 'unknown'
         snap_type = 'unknown'
         
-        if len(path_parts) >= 6:
-            date = path_parts[-4]
-            camera = path_parts[-3]
-            snap_type = path_parts[-2]
+        if len(path_parts) == 4:
+            date, camera, snap_type = path_parts[:3]
         
         return jsonify({
             'success': True,
@@ -3686,18 +3743,26 @@ def get_snapshot_info():
         
     except Exception as e:
         logger.error(f"Error getting snapshot info: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/snapshots/cleanup', methods=['POST'])
 def cleanup_old_snapshots():
     """Удалить старые снимки (старше N дней)"""
     try:
-        data = request.json
-        days = data.get('days', 30)  # По умолчанию 30 дней
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict):
+            data = {}
+        try:
+            days = int(data.get('days', 30))  # По умолчанию 30 дней
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid days'}), 400
+        # days <= 0 удалил бы все снимки одним запросом
+        if not 1 <= days <= 3650:
+            return jsonify({'success': False, 'error': 'days must be between 1 and 3650'}), 400
         
         cutoff_time = time.time() - (days * 24 * 3600)
-        snapshots_dir = '/config/www/snapshots'
+        snapshots_dir = SNAPSHOTS_DIR
         deleted_count = 0
         freed_space = 0
         
@@ -3705,7 +3770,7 @@ def cleanup_old_snapshots():
         
         for root, dirs, files in os.walk(snapshots_dir):
             for file in files:
-                if file.lower().endswith(('.jpg', '.jpeg', '.png', '.gif')):
+                if file.lower().endswith(SNAPSHOT_EXTENSIONS):
                     filepath = os.path.join(root, file)
                     stat = os.stat(filepath)
                     
@@ -3715,11 +3780,7 @@ def cleanup_old_snapshots():
                         deleted_count += 1
                         freed_space += file_size
                         logger.debug(f"Deleted old snapshot: {filepath}")
-                        
-                        # Удаляем thumbnail если есть
-                        thumb_path = filepath.replace('.jpg', '_thumb.jpg').replace('.png', '_thumb.png')
-                        if os.path.exists(thumb_path):
-                            os.remove(thumb_path)
+                        remove_snapshot_thumbnail(filepath)
         
         logger.info(f"✅ Cleaned up {deleted_count} old snapshots, freed {freed_space / (1024*1024):.1f} MB")
         return jsonify({
@@ -3730,14 +3791,14 @@ def cleanup_old_snapshots():
         
     except Exception as e:
         logger.error(f"Error cleaning up snapshots: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/snapshots/stats', methods=['GET'])
 def get_snapshots_stats():
     """Получить статистику по снимкам"""
     try:
-        snapshots_dir = '/config/www/snapshots'
+        snapshots_dir = SNAPSHOTS_DIR
         total_size = 0
         total_count = 0
         by_date = {}
@@ -3766,11 +3827,9 @@ def get_snapshots_stats():
                     total_size += stat.st_size
                     
                     # Парсим путь
-                    path_parts = root.split('/')
-                    if len(path_parts) >= 5:
-                        date = path_parts[-3]
-                        camera = path_parts[-2]
-                        snap_type = path_parts[-1]
+                    path_parts = os.path.relpath(root, SNAPSHOTS_DIR).split(os.sep)
+                    if len(path_parts) == 3:
+                        date, camera, snap_type = path_parts
                         
                         # По дате
                         if date not in by_date:
@@ -3803,7 +3862,7 @@ def get_snapshots_stats():
         
     except Exception as e:
         logger.error(f"Error getting snapshots stats: {e}")
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
         
 
 # ==================== БЛОК 15: МОНИТОРИНГ КАМЕР И ОТЧЕТЫ ====================
@@ -3831,8 +3890,8 @@ def init_camera_monitors():
             if cam.get('type') == 'openipc':
                 success = monitor_manager.add_camera(
                     camera_ip=cam['ip'],
-                    username=cam.get('username', 'root'),
-                    password=cam.get('password', '12345'),
+                    username=cam.get('username', ''),
+                    password=cam.get('password', ''),
                     rtsp_port=cam.get('rtsp_port', 554),
                     http_port=cam.get('port', 80)
                 )
@@ -3860,8 +3919,7 @@ def camera_monitor_status():
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error getting monitor status: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/camera_monitor/restart/<camera_ip>', methods=['POST'])
@@ -3872,31 +3930,48 @@ def camera_monitor_restart(camera_ip):
         return jsonify(result)
     except Exception as e:
         logger.error(f"Error restarting camera {camera_ip}: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/camera_monitor/add', methods=['POST'])
 def camera_monitor_add():
     """Добавить камеру в мониторинг вручную"""
     try:
-        data = request.json
-        if not data or 'camera_ip' not in data:
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or 'camera_ip' not in data:
             return jsonify({'success': False, 'error': 'No camera_ip provided'}), 400
         
+        camera_ip = valid_camera_host(data['camera_ip'])
+        if not camera_ip:
+            return jsonify({'success': False, 'error': 'Invalid camera_ip'}), 400
+        
+        # Без явных учётных данных берём сохранённые для этой камеры, а не дефолтные
+        stored = config_manager.get_camera(camera_ip) or {}
+        username = data.get('username') or stored.get('username', '')
+        password = data.get('password')
+        if not password or password == MASK:
+            password = stored.get('password', '')
+        
+        try:
+            rtsp_port = int(data.get('rtsp_port', stored.get('rtsp_port', 554)))
+            http_port = int(data.get('http_port', stored.get('port', 80)))
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'Invalid port'}), 400
+        if not (1 <= rtsp_port <= 65535 and 1 <= http_port <= 65535):
+            return jsonify({'success': False, 'error': 'Invalid port'}), 400
+        
         success = monitor_manager.add_camera(
-            camera_ip=data['camera_ip'],
-            username=data.get('username', 'root'),
-            password=data.get('password', '12345'),
-            rtsp_port=data.get('rtsp_port', 554),
-            http_port=data.get('http_port', 80)
+            camera_ip=camera_ip,
+            username=username,
+            password=password,
+            rtsp_port=rtsp_port,
+            http_port=http_port
         )
         
         return jsonify({'success': success})
     except Exception as e:
         logger.error(f"Error adding camera to monitor: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/camera_monitor/remove/<camera_ip>', methods=['POST'])
@@ -3907,8 +3982,7 @@ def camera_monitor_remove(camera_ip):
         return jsonify({'success': success})
     except Exception as e:
         logger.error(f"Error removing camera from monitor: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/camera_monitor/stats', methods=['GET'])
@@ -3943,8 +4017,7 @@ def camera_monitor_stats():
         return jsonify({'success': False, 'error': 'Failed to get stats'})
     except Exception as e:
         logger.error(f"Error getting monitor stats: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 # ===== API ЭНДПОИНТЫ ДЛЯ ОТЧЕТОВ =====
@@ -3953,7 +4026,7 @@ def camera_monitor_stats():
 def camera_monitor_reports():
     """Получить историю отчетов"""
     try:
-        limit = int(request.args.get('limit', 10))
+        limit = max(1, min(100, int(request.args.get('limit', 10))))
         reports = reporter.get_reports_history(limit)
         return jsonify({
             'success': True,
@@ -3961,8 +4034,7 @@ def camera_monitor_reports():
         })
     except Exception as e:
         logger.error(f"Error getting reports: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/camera_monitor/send_report', methods=['POST'])
@@ -3973,8 +4045,7 @@ def camera_monitor_send_report():
         return jsonify({'success': True, 'message': 'Report sent'})
     except Exception as e:
         logger.error(f"Error sending report: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 @app.route('/api/camera_monitor/failures', methods=['GET'])
@@ -3988,8 +4059,7 @@ def camera_monitor_failures():
         })
     except Exception as e:
         logger.error(f"Error getting failures: {e}")
-        logger.exception(e)
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Internal error'}), 500
 
 
 # ===== ВЕБ-ИНТЕРФЕЙС ДЛЯ МОНИТОРИНГА (ПЕРЕИМЕНОВАНО) =====

@@ -7,6 +7,7 @@ import aiofiles
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
@@ -206,9 +207,32 @@ class OpenIPCRecorder:
         
         return recordings
 
+    def resolve_recording_path(self, filename: str) -> Optional[Path]:
+        """Return the path of a recording in record_folder, or None if the name escapes it."""
+        name = str(filename)
+        if (
+            not name
+            or name in (".", "..")
+            or any(sep in name for sep in ("/", "\\", "\0"))
+        ):
+            _LOGGER.warning("Rejected invalid recording filename: %r", filename)
+            return None
+        try:
+            folder = self.record_folder.resolve()
+            resolved = (folder / name).resolve()
+        except (OSError, ValueError, RuntimeError):
+            _LOGGER.warning("Rejected invalid recording filename: %r", filename)
+            return None
+        if not resolved.is_relative_to(folder):
+            _LOGGER.warning("Rejected recording path outside record folder: %r", filename)
+            return None
+        return self.record_folder / name
+
     async def delete_recording(self, filename: str) -> bool:
         """Delete a recording file."""
-        filepath = self.record_folder / filename
+        filepath = self.resolve_recording_path(filename)
+        if filepath is None:
+            return False
         try:
             if filepath.exists():
                 filepath.unlink()
@@ -439,11 +463,11 @@ class OpenIPCRecorder:
 
     async def get_video_thumbnail(self, filename: str) -> bytes:
         """Get video thumbnail using ffmpeg."""
-        filepath = self.record_folder / filename
-        if not filepath.exists():
+        filepath = self.resolve_recording_path(filename)
+        if filepath is None or not filepath.exists():
             return None
         
-        thumb_path = self.record_folder / f"thumb_{filename}.jpg"
+        thumb_path = self.record_folder / f"thumb_{filepath.name}.jpg"
         
         try:
             import subprocess

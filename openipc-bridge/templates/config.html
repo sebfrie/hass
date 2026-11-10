@@ -467,7 +467,7 @@
                     <option value="vivotek">Vivotek</option>
                 </select>
                 <input type="text" class="form-control mb-2 bg-dark text-white" placeholder="Логин" id="username" value="root">
-                <input type="password" class="form-control mb-2 bg-dark text-white" placeholder="Пароль" id="password" value="12345">
+                <input type="password" class="form-control mb-2 bg-dark text-white" placeholder="Пароль" id="password" autocomplete="new-password">
                 <button type="submit" class="btn btn-success w-100">Добавить</button>
             </form>
         </div>
@@ -1226,7 +1226,7 @@ function loadCameraSettings(index) {
     document.getElementById('cameraIp').value = cam.ip || '';
     document.getElementById('cameraType').value = cam.type || 'openipc';
     document.getElementById('cameraUsername').value = cam.username || 'root';
-    document.getElementById('cameraPassword').value = cam.password || '12345';
+    document.getElementById('cameraPassword').value = cam.password || '';
     document.getElementById('cameraRtspPort').value = cam.rtsp_port || 554;
     document.getElementById('cameraHttpPort').value = cam.port || 80;
     
@@ -1593,7 +1593,7 @@ function addCamera(event) {
     
     document.getElementById('cameraForm').reset();
     document.getElementById('username').value = 'root';
-    document.getElementById('password').value = '12345';
+    document.getElementById('password').value = '';
     
     // Сохраняем в файл
     fetch('/api/config/save', {

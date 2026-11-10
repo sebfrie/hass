@@ -1,11 +1,27 @@
 """OpenIPC audio handling for TTS."""
+import json
 import logging
+import re
 import subprocess
 import os
 from typing import Optional
 from homeassistant.core import HomeAssistant
 
 _LOGGER = logging.getLogger(__name__)
+
+_LANGUAGE_RE = re.compile(r"^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,4})?$")
+
+_GTTS_SCRIPT = """
+import json, sys
+try:
+    from gtts import gTTS
+    params = json.load(sys.stdin)
+    gTTS(text=params["text"], lang=params["lang"], slow=False).save(params["output"])
+    print("SUCCESS")
+except Exception as e:
+    print(f"ERROR: {e}")
+    sys.exit(1)
+"""
 
 class OpenIPCAudio:
     """Class to handle audio playback on OpenIPC cameras."""
@@ -121,22 +137,19 @@ class OpenIPCAudio:
         import subprocess
         import tempfile
         
+        if not isinstance(language, str) or not _LANGUAGE_RE.match(language):
+            _LOGGER.error("Invalid TTS language: %r", language)
+            return False
+        
         temp_mp3 = tempfile.NamedTemporaryFile(suffix='.mp3', delete=False).name
         
         try:
-            python_cmd = f"""
-import sys
-try:
-    from gtts import gTTS
-    tts = gTTS(text='''{message}''', lang='{language}', slow=False)
-    tts.save('{temp_mp3}')
-    print("SUCCESS")
-except Exception as e:
-    print(f"ERROR: {{e}}")
-    sys.exit(1)
-"""
+            # Static script: user data is passed as JSON on stdin, never as code
             result = subprocess.run(
-                ["python3", "-c", python_cmd],
+                ["python3", "-c", _GTTS_SCRIPT],
+                input=json.dumps(
+                    {"text": message, "lang": language, "output": temp_mp3}
+                ),
                 capture_output=True, text=True, timeout=30
             )
             

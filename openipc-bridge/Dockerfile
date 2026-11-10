@@ -59,6 +59,7 @@ COPY server.py /app/
 COPY stream_monitor.py /app/
 COPY recording_api.py /app/
 COPY config_manager.py /app/
+COPY security.py /app/
 COPY camera_monitor.py /app/
 COPY daily_reporter.py /app/
 COPY tts_generate_openipc.sh /app/
@@ -79,16 +80,16 @@ RUN chmod a+x /run.sh && \
     chmod a+x /app/camera_monitor.py && \
     chmod a+x /app/daily_reporter.py
 
-# Create necessary directories
-RUN mkdir -p /config/www/recordings && \
-    mkdir -p /config/www/snapshots && \
-    mkdir -p /config/www/exports && \
+# Create necessary directories (media is stored in /media, not in the public /config/www)
+RUN mkdir -p /media/openipc/recordings && \
+    mkdir -p /media/openipc/snapshots && \
+    mkdir -p /media/openipc/exports && \
+    mkdir -p /media/openipc/logos && \
     mkdir -p /config/openipc_backups && \
     mkdir -p /tmp/hls
 
 # Set permissions
-RUN chmod -R 777 /tmp/hls && \
-    chmod -R 777 /config/www
+RUN chmod -R 755 /tmp/hls
 
 # Create working directory
 WORKDIR /app

@@ -20,6 +20,7 @@ from flask import Blueprint, request, jsonify, send_file
 
 # Импортируем менеджер конфигурации
 from config_manager import get_config_manager
+from security import MEDIA_ROOT, safe_name, redact
 
 
 # ==================== БЛОК 1: КОНФИГУРАЦИЯ И КОНСТАНТЫ ====================
@@ -37,10 +38,10 @@ logger.addHandler(file_handler)
 
 recording_bp = Blueprint('recording', __name__)
 
-# Директории для хранения
-RECORDINGS_DIR = "/config/www/recordings"
-EXPORTS_DIR = "/config/www/exports"
-SNAPSHOTS_DIR = "/config/www/snapshots"
+# Директории для хранения (вне /config/www, который HA отдаёт без авторизации)
+RECORDINGS_DIR = os.path.join(MEDIA_ROOT, "recordings")
+EXPORTS_DIR = os.path.join(MEDIA_ROOT, "exports")
+SNAPSHOTS_DIR = os.path.join(MEDIA_ROOT, "snapshots")
 
 # Создаем директории
 try:
@@ -182,15 +183,15 @@ def get_camera_credentials(camera_ip):
         config_manager = get_config_manager()
         cam_config = config_manager.get_camera(camera_ip)
         if cam_config:
-            username = cam_config.get('username', 'root')
-            password = cam_config.get('password', '12345')
-            logger.debug(f"Got credentials for {camera_ip}: username={username}")
+            username = cam_config.get('username', '')
+            password = cam_config.get('password', '')
+            logger.debug(f"Got credentials for {camera_ip}")
             return username, password
     except Exception as e:
-        logger.error(f"Error getting credentials for {camera_ip}: {e}")
+        logger.error(f"Error getting credentials for {camera_ip}: {type(e).__name__}")
     
-    logger.debug(f"Using default credentials for {camera_ip}")
-    return 'root', '12345'
+    logger.debug(f"No credentials configured for {camera_ip}")
+    return '', ''
 
 
 def check_recordings_status():
@@ -337,6 +338,8 @@ def get_recording_by_id(recording_id):
                         filepath = os.path.join(root, file)
                         with open(filepath, 'r') as f:
                             metadata = json.load(f)
+                            # video_path derived from the sidecar location (survives the media move)
+                            metadata['video_path'] = filepath[:-len('.json')]
                             if metadata.get('recording_id') == recording_id:
                                 recordings_db[recording_id] = metadata
                                 logger.info(f"✅ Loaded recording {recording_id} from disk")
@@ -443,7 +446,7 @@ class RecordingManager(threading.Thread):
         try:
             # Формируем команду FFmpeg
             ffmpeg_cmd = self._build_ffmpeg_cmd()
-            cmd_str = ' '.join(ffmpeg_cmd)
+            cmd_str = redact(' '.join(ffmpeg_cmd))
             logger.info(f"FFmpeg command: {cmd_str}")
             
             # Убеждаемся, что директория существует
@@ -1006,7 +1009,7 @@ def get_recording(recording_id):
         
         # Формируем URL для доступа к видео
         video_path = metadata['video_path']
-        relative_path = video_path.replace('/config/www/', '')
+        relative_path = os.path.relpath(video_path, MEDIA_ROOT)
         video_url = f"/{relative_path}"
         
         return jsonify({
@@ -1157,6 +1160,10 @@ def save_snapshot():
         # Очищаем имя камеры
         camera_folder = camera.replace('.', '_').replace(' ', '_').lower()
         
+        # Имена папок приходят от клиента: допускаем только простые имена
+        if not safe_name(camera_folder) or not safe_name(snapshot_type):
+            return jsonify({'success': False, 'error': 'Invalid camera or type'}), 400
+        
         # Создаем структуру папок
         date_str = datetime.now().strftime('%Y-%m-%d')
         snapshot_dir = os.path.join(SNAPSHOTS_DIR, date_str, camera_folder, snapshot_type)
@@ -1181,7 +1188,7 @@ def save_snapshot():
             logger.error(f"Error creating thumbnail: {e}")
         
         # Формируем URL
-        relative_path = filepath.replace('/config/www/', '')
+        relative_path = os.path.relpath(filepath, MEDIA_ROOT)
         url = f"/{relative_path}"
         
         logger.info(f"✅ Snapshot saved: {filepath}")
@@ -1375,6 +1382,8 @@ def init_recording_api(app):
                     filepath = os.path.join(root, file)
                     with open(filepath, 'r') as f:
                         metadata = json.load(f)
+                        # video_path derived from the sidecar location (survives the media move)
+                        metadata['video_path'] = filepath[:-len('.json')]
                         recordings_db[metadata['recording_id']] = metadata
                         count += 1
                 except Exception as e:

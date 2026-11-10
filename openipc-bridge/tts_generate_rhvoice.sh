@@ -2,7 +2,7 @@
 # Скрипт для генерации речи через отдельный RHVoice-аддон (ha-rhvoice-addon)
 
 MESSAGE="$1"
-LANG="${2:-ru}"
+LANG_CODE="${2:-ru}"
 FILENAME="$3"
 
 if [ -z "$MESSAGE" ] || [ -z "$FILENAME" ]; then
@@ -10,17 +10,25 @@ if [ -z "$MESSAGE" ] || [ -z "$FILENAME" ]; then
     exit 1
 fi
 
-TIMESTAMP=$(date +%s)
-TEMP_WAV="/tmp/tts_${TIMESTAMP}.wav"
+if ! [[ "$LANG_CODE" =~ ^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,4})?$ ]]; then
+    echo "Invalid language code"
+    exit 1
+fi
+
+TEMP_WAV="$(mktemp /tmp/tts_XXXXXX.wav)" || exit 1
+trap 'rm -f "$TEMP_WAV"' EXIT
 
 # Определяем голос в зависимости от языка
-if [ "$LANG" = "ru" ]; then
+if [ "$LANG_CODE" = "ru" ]; then
     VOICE="anna"
-elif [ "$LANG" = "en" ]; then
+elif [ "$LANG_CODE" = "en" ]; then
     VOICE="slt"
 else
     VOICE="anna"
 fi
+
+# JSON формируется через json.dumps (текст передаётся аргументом), а не конкатенацией строк
+PAYLOAD="$(python3 -c 'import json, sys; print(json.dumps({"text": sys.argv[1], "voice": sys.argv[2]}))' "$MESSAGE" "$VOICE")" || exit 1
 
 echo "🔊 Requesting RHVoice from separate addon: voice=$VOICE"
 
@@ -43,7 +51,7 @@ for URL in "${RHVOICE_URLS[@]}"; do
     # Для definitio/ha-rhvoice-addon используем JSON
     RESPONSE_MSG=$(curl -X POST "$URL" \
         -H "Content-Type: application/json" \
-        -d "{\"text\":\"$MESSAGE\",\"voice\":\"$VOICE\"}" \
+        --data-binary "$PAYLOAD" \
         --output "$TEMP_WAV" \
         --write-out "%{http_code}" \
         --silent)
@@ -59,7 +67,7 @@ done
 
 if [ "$SUCCESS" = false ]; then
     echo "❌ All RHVoice endpoints failed, falling back to Google TTS"
-    /app/tts_generate_openipc.sh "$MESSAGE" "$LANG" "$FILENAME"
+    /app/tts_generate_openipc.sh "$MESSAGE" "$LANG_CODE" "$FILENAME"
     exit $?
 fi
 
@@ -70,12 +78,9 @@ ffmpeg -y -i "$TEMP_WAV" -ar 8000 -ac 1 -f s16le "$FILENAME" 2>/dev/null
 
 if [ ! -f "$FILENAME" ]; then
     echo "❌ PCM conversion failed, falling back to Google TTS"
-    /app/tts_generate_openipc.sh "$MESSAGE" "$LANG" "$FILENAME"
+    /app/tts_generate_openipc.sh "$MESSAGE" "$LANG_CODE" "$FILENAME"
     exit $?
 fi
-
-# Удаляем временный файл
-rm -f "$TEMP_WAV"
 
 SIZE=$(wc -c < "$FILENAME")
 echo "✅ RHVoice PCM file created: $FILENAME ($SIZE bytes)"
