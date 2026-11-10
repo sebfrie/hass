@@ -5,6 +5,7 @@ Config Manager for OpenIPC Bridge
 """
 
 import os
+import re
 import json
 import yaml
 import logging
@@ -14,7 +15,21 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 
+from security import valid_camera_host, safe_name
+
 logger = logging.getLogger(__name__)
+
+# Placeholder returned instead of secrets; sending it back keeps the stored value
+MASK = "********"
+CAMERA_TYPES = {"openipc", "beward", "vivotek"}
+TTS_FORMATS = {"pcm", "alaw"}
+RECORDING_QUALITIES = {"low", "medium", "high"}
+# Поля камеры, которые можно добавить через API, даже если их ещё нет в конфиге
+UPDATABLE_CAMERA_KEYS = {
+    "name", "type", "username", "password", "port", "rtsp_port",
+    "snapshot_endpoints", "tts_endpoint", "tts_format", "relay_endpoints",
+    "recording", "detection", "snapshots", "osd",
+}
 
 # ==================== КОНСТАНТЫ ====================
 
@@ -35,109 +50,7 @@ DEFAULT_CONFIG = {
         "video_quality": "high",
         "max_size_mb": 50
     },
-    "cameras": [
-        {
-            "name": "OpenIPC SIP",
-            "ip": "192.168.1.4",
-            "type": "openipc",
-            "username": "root",
-            "password": "12345",
-            "port": 80,
-            "rtsp_port": 554,
-            "snapshot_endpoints": ["/image.jpg", "/cgi-bin/api.cgi?cmd=Snap&channel=0"],
-            "tts_endpoint": "/play_audio",
-            "tts_format": "pcm",
-            "relay_endpoints": {
-                "relay1_on": "",
-                "relay1_off": "",
-                "relay2_on": "",
-                "relay2_off": ""
-            },
-            "recording": {
-                "enabled": True,
-                "mode": "continuous",
-                "segment_duration": 300,
-                "archive_depth": 7,
-                "quality": "medium",
-                "fps": 15,
-                "format": "mp4"
-            },
-            "detection": {
-                "motion": True,
-                "qr": True,
-                "sensitivity": 5,
-                "person": False,
-                "car": False,
-                "lpr": False,
-                "person_confidence": 70,
-                "car_confidence": 80,
-                "whitelist": []
-            },
-            "snapshots": {
-                "enabled": True,
-                "format": "jpg"
-            },
-            "osd": {
-                "enabled": True,
-                "port": 9000,
-                "time_format": "%d.%m.%Y %H:%M:%S",
-                "regions": {
-                    "0": {"type": "image", "enabled": False, "image_path": "", "posx": 10, "posy": 10},
-                    "1": {"type": "text", "enabled": True, "text": "ДВЕРЬ ОТКРЫТА $t", "color": "#ff0000", "size": 48, "posx": 50, "posy": 50, "font": "UbuntuMono-Regular", "opacity": 255},
-                    "2": {"type": "text", "enabled": True, "text": "ЗАПИСЬ: 3 МИН", "color": "#ffff00", "size": 36, "posx": 50, "posy": 120, "font": "UbuntuMono-Regular", "opacity": 255},
-                    "3": {"type": "text", "enabled": False, "text": "", "color": "#ffffff", "size": 32, "posx": 10, "posy": 200, "font": "UbuntuMono-Regular", "opacity": 255}
-                }
-            }
-        },
-        {
-            "name": "Beward Doorbell",
-            "ip": "192.168.1.10",
-            "type": "beward",
-            "username": "admin",
-            "password": "Q96811621w",
-            "port": 80,
-            "rtsp_port": 554,
-            "snapshot_endpoints": ["/cgi-bin/jpg/image.cgi", "/cgi-bin/snapshot.cgi"],
-            "tts_endpoint": "/cgi-bin/audio/transmit.cgi",
-            "tts_format": "alaw",
-            "relay_endpoints": {
-                "relay1_on": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=1",
-                "relay1_off": "/cgi-bin/alarmout_cgi?action=set&Output=0&Status=0",
-                "relay2_on": "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=1",
-                "relay2_off": "/cgi-bin/alarmout_cgi?action=set&Output=1&Status=0"
-            },
-            "recording": {
-                "enabled": True,
-                "mode": "continuous",
-                "segment_duration": 300,
-                "archive_depth": 7,
-                "quality": "medium",
-                "fps": 15,
-                "format": "mp4"
-            },
-            "detection": {
-                "motion": True,
-                "qr": True,
-                "sensitivity": 5,
-                "person": False,
-                "car": False,
-                "lpr": False,
-                "person_confidence": 70,
-                "car_confidence": 80,
-                "whitelist": []
-            },
-            "snapshots": {
-                "enabled": True,
-                "format": "jpg"
-            },
-            "osd": {
-                "enabled": False,
-                "port": 9000,
-                "time_format": "%d.%m.%Y %H:%M:%S",
-                "regions": {}
-            }
-        }
-    ],
+    "cameras": [],
     "tts": {
         "provider": "google",
         "google": {
@@ -241,6 +154,7 @@ class ConfigManager:
             # Сохраняем конфигурацию
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
                 yaml.dump(self.config, f, default_flow_style=False, allow_unicode=True, sort_keys=False)
+            os.chmod(CONFIG_FILE, 0o600)  # contains camera passwords
             
             logger.info("✅ Configuration saved successfully")
             
@@ -292,6 +206,10 @@ class ConfigManager:
     def restore_backup(self, backup_name: str) -> bool:
         """Восстановить конфигурацию из бэкапа"""
         try:
+            if (not safe_name(backup_name) or not backup_name.startswith('config_')
+                    or not backup_name.endswith('.yaml')):
+                logger.error(f"Invalid backup name: {backup_name!r}")
+                return False
             backup_path = os.path.join(CONFIG_BACKUP_DIR, backup_name)
             if not os.path.exists(backup_path):
                 logger.error(f"Backup not found: {backup_name}")
@@ -470,6 +388,11 @@ class ConfigManager:
                 logger.error(f"Camera {camera_ip} not found")
                 return False
             
+            if not isinstance(settings, dict):
+                logger.error("Recording settings must be an object")
+                return False
+            settings = self._sanitize_recording_settings(settings)
+            
             if 'recording' not in cam:
                 cam['recording'] = {}
             
@@ -515,6 +438,181 @@ class ConfigManager:
             logger.error(f"Error updating recording settings for {camera_ip}: {e}")
             return False
     
+    # ==================== ВАЛИДАЦИЯ И МАСКИРОВАНИЕ СЕКРЕТОВ ====================
+
+    @staticmethod
+    def _int_in_range(value, default, low, high):
+        try:
+            return max(low, min(high, int(value)))
+        except (TypeError, ValueError):
+            return default
+
+    def _sanitize_recording_settings(self, settings: Dict) -> Dict:
+        """Ограничить значения, которые попадают в имена файлов и аргументы ffmpeg"""
+        clean = dict(settings)
+        if 'mode' in clean and clean['mode'] not in ('continuous', 'motion', 'disabled'):
+            clean['mode'] = 'continuous'
+        if 'quality' in clean and clean['quality'] not in RECORDING_QUALITIES:
+            clean['quality'] = 'medium'
+        if 'format' in clean and clean['format'] not in ('mp4', 'mkv'):
+            clean['format'] = 'mp4'
+        for key, default, low, high in (
+            ('segment_duration', 300, 10, 3600),
+            ('archive_depth', 7, 1, 365),
+            ('fps', 15, 1, 60),
+            ('sensitivity', 5, 1, 10),
+            ('person_confidence', 70, 0, 100),
+            ('car_confidence', 80, 0, 100),
+        ):
+            if key in clean:
+                clean[key] = self._int_in_range(clean[key], default, low, high)
+        return clean
+
+    @staticmethod
+    def _valid_endpoint(value) -> bool:
+        return (
+            value == ""
+            or (isinstance(value, str) and value.startswith("/") and not value.startswith("//")
+                and len(value) <= 512 and not re.search(r"[\s\\\x00-\x1f]", value))
+        )
+
+    def validate_camera(self, cam: Dict, trusted_hosts=()):
+        """Проверить и нормализовать настройки камеры. Возвращает (camera, error)."""
+        if not isinstance(cam, dict):
+            return None, "Camera must be an object"
+        raw_host = cam.get('ip')
+        if isinstance(raw_host, str) and raw_host.strip() in trusted_hosts:
+            host = raw_host.strip()
+        else:
+            host = valid_camera_host(raw_host)
+        if not host:
+            return None, f"Invalid camera address: {raw_host!r} (must be a LAN IP or hostname)"
+
+        name = cam.get('name') or host
+        if (not isinstance(name, str) or not name.strip() or len(name) > 100
+                or re.search(r'[<>"`\x00-\x1f]', name)):
+            return None, "Invalid camera name"
+
+        cam_type = cam.get('type', 'openipc')
+        if cam_type not in CAMERA_TYPES:
+            return None, f"Invalid camera type: {cam_type!r}"
+
+        for key in ('username', 'password'):
+            value = cam.get(key, '')
+            if value is None:
+                value = ''
+            if not isinstance(value, str) or len(value) > 128 or re.search(r'[\x00-\x1f]', value):
+                return None, f"Invalid {key}"
+
+        clean = dict(cam)
+        clean.update(ip=host, name=name.strip(), type=cam_type,
+                     username=cam.get('username') or '', password=cam.get('password') or '')
+
+        for key, default in (('port', 80), ('rtsp_port', 554)):
+            try:
+                port = int(cam.get(key, default))
+            except (TypeError, ValueError):
+                return None, f"Invalid {key}"
+            if not 1 <= port <= 65535:
+                return None, f"Invalid {key}"
+            clean[key] = port
+
+        endpoints = cam.get('snapshot_endpoints')
+        if endpoints is not None:
+            if (not isinstance(endpoints, list)
+                    or not all(isinstance(e, str) and self._valid_endpoint(e) for e in endpoints)):
+                return None, "Invalid snapshot_endpoints"
+        if not self._valid_endpoint(cam.get('tts_endpoint', '')):
+            return None, "Invalid tts_endpoint"
+        relays = cam.get('relay_endpoints')
+        if relays is not None:
+            if (not isinstance(relays, dict)
+                    or not all(self._valid_endpoint(v) for v in relays.values())):
+                return None, "Invalid relay_endpoints"
+        if cam.get('tts_format', 'pcm') not in TTS_FORMATS:
+            return None, "Invalid tts_format"
+
+        if isinstance(clean.get('recording'), dict):
+            clean['recording'] = self._sanitize_recording_settings(clean['recording'])
+
+        # osd.port подставляется в URL камеры, поэтому только число
+        if 'osd' in clean:
+            if not isinstance(clean['osd'], dict):
+                return None, "Invalid osd settings"
+            if 'port' in clean['osd']:
+                try:
+                    osd_port = int(clean['osd']['port'])
+                except (TypeError, ValueError):
+                    return None, "Invalid osd port"
+                if not 1 <= osd_port <= 65535:
+                    return None, "Invalid osd port"
+                clean['osd'] = dict(clean['osd'], port=osd_port)
+        return clean, None
+
+    def replace_cameras(self, new_cameras):
+        """Заменить список камер (с валидацией). Пароль-маска сохраняет прежний пароль."""
+        if not isinstance(new_cameras, list) or len(new_cameras) > 64:
+            return False, "cameras must be a list"
+        old_by_ip = {c.get('ip'): c for c in self.config['cameras']}
+        old_by_name = {c.get('name'): c for c in self.config['cameras']}
+        trusted = set(old_by_ip)
+        cleaned, seen = [], set()
+        for cam in new_cameras:
+            if isinstance(cam, dict) and cam.get('password') == MASK:
+                old = old_by_ip.get(cam.get('ip')) or old_by_name.get(cam.get('name'))
+                cam = dict(cam, password=(old or {}).get('password', ''))
+            clean, error = self.validate_camera(cam, trusted)
+            if error:
+                return False, error
+            if clean['ip'] in seen:
+                return False, f"Duplicate camera address: {clean['ip']}"
+            seen.add(clean['ip'])
+            cleaned.append(clean)
+        self.config['cameras'] = cleaned
+        if not self.save_config():
+            return False, "Failed to save config"
+        return True, None
+
+    def update_camera_validated(self, camera_ip: str, updates: Dict):
+        """Обновить поля существующей камеры с валидацией. Возвращает (found, error)."""
+        import copy
+        cam = self.get_camera(camera_ip)
+        if not cam:
+            return False, "not_found"
+        if not isinstance(updates, dict):
+            return True, "Invalid data"
+        merged = copy.deepcopy(cam)
+        for key, value in updates.items():
+            if (key in merged or key in UPDATABLE_CAMERA_KEYS) and not (key == 'password' and value == MASK):
+                merged[key] = value
+        clean, error = self.validate_camera(merged, {c.get('ip') for c in self.config['cameras']})
+        if error:
+            return True, error
+        cam.clear()
+        cam.update(clean)
+        if not self.save_config():
+            return True, "Failed to save config"
+        return True, None
+
+    def mask_camera(self, cam: Dict) -> Dict:
+        masked = dict(cam)
+        if masked.get('password'):
+            masked['password'] = MASK
+        return masked
+
+    def public_config(self) -> Dict:
+        """Копия конфигурации без секретов (для отдачи в браузер)"""
+        import copy
+        cfg = copy.deepcopy(self.config)
+        cfg['cameras'] = [self.mask_camera(c) for c in cfg.get('cameras', [])]
+        telegram = cfg.get('telegram', {})
+        if telegram.get('bot_token'):
+            telegram['bot_token'] = MASK
+        yandex = cfg.get('tts', {}).get('yandex', {})
+        if yandex.get('api_key'):
+            yandex['api_key'] = MASK
+        return cfg
+
     def sync_with_integration(self):
         """Синхронизировать конфигурацию с интеграцией HA"""
         try:
@@ -533,8 +631,6 @@ class ConfigManager:
                     'ip': cam.get('ip'),
                     'name': cam.get('name'),
                     'type': cam.get('type'),
-                    'username': cam.get('username'),
-                    'password': cam.get('password'),
                     'port': cam.get('port', 80),
                     'rtsp_port': cam.get('rtsp_port', 554),
                     'recording_enabled': cam.get('recording', {}).get('enabled', True),
@@ -612,6 +708,10 @@ class ConfigManager:
                 logger.warning(f"⚠️ Camera has no IP, skipping")
                 skipped.append(str(ha_cam))
                 continue
+            if not valid_camera_host(camera_ip):
+                logger.warning(f"⚠️ Skipping camera with invalid host: {camera_ip!r}")
+                skipped.append(str(camera_ip))
+                continue
             
             existing = self.get_camera(camera_ip)
             
@@ -620,8 +720,8 @@ class ConfigManager:
                 old_name = existing.get('name')
                 existing['name'] = ha_cam.get('name', existing['name'])
                 existing['type'] = ha_cam.get('device_type', existing.get('type', 'openipc'))
-                existing['username'] = ha_cam.get('username', existing['username'])
-                existing['password'] = ha_cam.get('password', existing['password'])
+                existing['username'] = ha_cam.get('username', existing.get('username', ''))
+                existing['password'] = ha_cam.get('password', existing.get('password', ''))
                 existing['port'] = ha_cam.get('port', existing.get('port', 80))
                 existing['rtsp_port'] = ha_cam.get('rtsp_port', existing.get('rtsp_port', 554))
                 
@@ -639,8 +739,8 @@ class ConfigManager:
                     'name': ha_cam.get('name', f"Camera {camera_ip}"),
                     'ip': camera_ip,
                     'type': device_type,
-                    'username': ha_cam.get('username', 'root'),
-                    'password': ha_cam.get('password', '12345'),
+                    'username': ha_cam.get('username', ''),
+                    'password': ha_cam.get('password', ''),
                     'port': ha_cam.get('port', 80),
                     'rtsp_port': ha_cam.get('rtsp_port', 554),
                     'recording': {
@@ -716,8 +816,6 @@ class ConfigManager:
                 'ip': cam.get('ip'),
                 'name': cam.get('name'),
                 'type': cam.get('type'),
-                'username': cam.get('username'),
-                'password': cam.get('password'),
                 'port': cam.get('port', 80),
                 'rtsp_port': cam.get('rtsp_port', 554),
                 'recording_enabled': cam.get('recording', {}).get('enabled', True),

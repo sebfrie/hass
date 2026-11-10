@@ -6,21 +6,26 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 class OpenIPCCamerasView(HomeAssistantView):
-    """View to return list of OpenIPC cameras for addon."""
+    """View to return list of OpenIPC cameras (incl. credentials) for addon."""
     
     url = "/api/openipc/cameras"
     name = "api:openipc:cameras"
-    requires_auth = False  # Будем проверять токен вручную
+    # Authentication is enforced by Home Assistant itself: the token must be a
+    # valid HA access token. The addon reaches this via the Supervisor proxy,
+    # which authenticates as the (admin) Supervisor system user.
+    requires_auth = True
     
     async def get(self, request):
         """Handle GET request."""
         hass = request.app["hass"]
         
-        # Проверяем авторизацию (токен из Supervisor)
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            _LOGGER.warning("❌ Unauthorized access to cameras API - no token")
-            return self.json({"success": False, "error": "Unauthorized"}, status_code=401)
+        # The response contains camera credentials, so admins only
+        user = request.get("hass_user")
+        if user is None or not user.is_admin:
+            _LOGGER.warning("Rejected non-admin access to cameras API")
+            return self.json(
+                {"success": False, "error": "Forbidden"}, status_code=403
+            )
         
         # Получаем список камер из интеграции
         cameras = await async_get_cameras(hass)

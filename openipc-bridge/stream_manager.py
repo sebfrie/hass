@@ -58,8 +58,8 @@ class StreamManager:
         try:
             os.makedirs(self.base_hls_dir, exist_ok=True)
             os.makedirs(self.hls_dir, exist_ok=True)
-            os.chmod(self.base_hls_dir, 0o777)
-            os.chmod(self.hls_dir, 0o777)
+            os.chmod(self.base_hls_dir, 0o755)
+            os.chmod(self.hls_dir, 0o755)
             logger.info(f"✅ Created directories: {self.hls_dir}")
         except Exception as e:
             logger.error(f"❌ Failed to create directories: {e}")

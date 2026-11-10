@@ -19,6 +19,8 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # Repository-settings checks (issues/topics) only matter for HACS default-list inclusion
+          ignore: issues topics
 
   hassfest:
     runs-on: ubuntu-latest

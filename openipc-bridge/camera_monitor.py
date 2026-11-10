@@ -26,6 +26,23 @@ METRICS_TIMEOUT = 3  # Таймаут для проверки метрик
 SSH_PORT = 22        # Порт SSH
 SSH_TIMEOUT = 10     # Таймаут SSH соединения
 MAX_FAILURES = 3     # Количество неудачных проверок до перезапуска
+KNOWN_HOSTS_FILE = "/data/camera_known_hosts"  # SSH-ключи камер (TOFU: фиксируются при первом подключении)
+
+
+def _new_ssh_client() -> "paramiko.SSHClient":
+    """SSH-клиент с закреплением ключа хоста: первый ключ запоминается, смена ключа отклоняется (MITM)"""
+    client = paramiko.SSHClient()
+    try:
+        if not os.path.exists(KNOWN_HOSTS_FILE):
+            os.makedirs(os.path.dirname(KNOWN_HOSTS_FILE), exist_ok=True)
+            fd = os.open(KNOWN_HOSTS_FILE, os.O_WRONLY | os.O_CREAT, 0o600)
+            os.close(fd)
+        client.load_host_keys(KNOWN_HOSTS_FILE)
+    except OSError as e:
+        logger.warning(f"Cannot use {KNOWN_HOSTS_FILE}, host keys will not persist: {e}")
+    # Известный хост с другим ключом даёт BadHostKeyException; новый ключ добавляется и сохраняется
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    return client
 
 # Команды для перезапуска majestic
 RESTART_COMMANDS = [
@@ -49,7 +66,7 @@ STATUS_COMMANDS = {
 class CameraMonitor(threading.Thread):
     """Мониторинг отдельной камеры на прошивке OpenIPC"""
     
-    def __init__(self, camera_ip: str, username: str = 'root', password: str = '12345', 
+    def __init__(self, camera_ip: str, username: str = '', password: str = '', 
                  rtsp_port: int = 554, http_port: int = 80, metrics_port: int = 80):
         super().__init__()
         self.camera_ip = camera_ip
@@ -271,8 +288,7 @@ class CameraMonitor(threading.Thread):
             return False, {}
         
         try:
-            client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            client = _new_ssh_client()
             client.connect(
                 self.camera_ip,
                 port=SSH_PORT,
@@ -314,8 +330,7 @@ class CameraMonitor(threading.Thread):
             return
         
         try:
-            client = paramiko.SSHClient()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            client = _new_ssh_client()
             client.connect(
                 self.camera_ip,
                 port=SSH_PORT,
@@ -406,8 +421,8 @@ class MonitorManager:
                 logger.info(f"Removing stopped monitor for {ip}")
                 del self.monitors[ip]
     
-    def add_camera(self, camera_ip: str, username: str = 'root', 
-                   password: str = '12345', rtsp_port: int = 554, http_port: int = 80):
+    def add_camera(self, camera_ip: str, username: str = '', 
+                   password: str = '', rtsp_port: int = 554, http_port: int = 80):
         """Добавить камеру в мониторинг"""
         with self.lock:
             if camera_ip in self.monitors:

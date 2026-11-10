@@ -126,6 +126,10 @@ class QRScanner:
         """Scan QR code from a file path."""
         _LOGGER.info(f"📁 Scanning QR from file: {file_path}")
         
+        if not self.hass.config.is_allowed_path(file_path):
+            _LOGGER.error(f"Path not allowed: {file_path}")
+            return None
+        
         if not os.path.exists(file_path):
             _LOGGER.error(f"File not found: {file_path}")
             return None

@@ -6,7 +6,7 @@ cameras:
     ip: "192.168.1.4"              # IP адрес
     type: "openipc"                # Тип: openipc, beward, vivotek
     username: "root"                # Логин
-    password: "12345"               # Пароль
+    password: "CHANGE_ME"           # Пароль
     snapshot_endpoints:             # Эндпоинты для получения снимков
       - "/image.jpg"
       - "/cgi-bin/api.cgi?cmd=Snap&channel=0"
@@ -22,7 +22,7 @@ cameras:
     ip: "192.168.1.10"
     type: "beward"
     username: "admin"
-    password: "Q96811621w"
+    password: "CHANGE_ME"
     snapshot_endpoints:
       - "/cgi-bin/jpg/image.cgi"
       - "/cgi-bin/snapshot.cgi"

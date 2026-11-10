@@ -9,7 +9,7 @@ from pathlib import Path
 from datetime import datetime
 
 from homeassistant.const import CONF_ENTITY_ID
-from homeassistant.exceptions import HomeAssistantError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 
 from .const import (
     DOMAIN,
@@ -28,6 +28,16 @@ from .helpers import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _ensure_allowed_path(hass: HomeAssistant, path: str) -> None:
+    """Raise if a user-supplied path is outside the allowed directories."""
+    if not hass.config.is_allowed_path(path):
+        raise ServiceValidationError(
+            f"Path '{path}' is not allowed; place the file in an allowed "
+            "directory (e.g. /config/www) or add its directory to "
+            "allowlist_external_dirs"
+        )
 
 # ==================== Basic Services ====================
 
@@ -980,6 +990,8 @@ async def async_lnpr_get_picture(call: ServiceCall, hass: HomeAssistant) -> None
     time_str = call.data.get("time")
     filename = call.data.get("filename")
     
+    _ensure_allowed_path(hass, filename)
+    
     coordinator = await find_coordinator_by_entity_id(hass, entity_id)
     if not coordinator or not coordinator.beward:
         _LOGGER.error("Beward device not found for entity %s", entity_id)
@@ -993,8 +1005,7 @@ async def async_lnpr_get_picture(call: ServiceCall, hass: HomeAssistant) -> None
             if response.status == 200:
                 data = await response.read()
                 
-                with open(filename, 'wb') as f:
-                    f.write(data)
+                await hass.async_add_executor_job(Path(filename).write_bytes, data)
                 
                 await hass.services.async_call(
                     "persistent_notification",
@@ -1157,15 +1168,13 @@ async def async_qr_stop(call: ServiceCall, hass: HomeAssistant) -> None:
 
 async def async_start_qr_scan(call: ServiceCall, hass: HomeAssistant) -> None:
     """Start continuous QR scanning for a camera."""
-    _LOGGER.error(f"🔥🔥🔥 START_QR_SCAN CALLED with data: {call.data}")
+    _LOGGER.debug("START_QR_SCAN called")
     
     entity_id = call.data.get('entity_id')
-    expected_code = call.data.get('expected_code', 'a4625vol')
+    expected_code = call.data['expected_code']
     timeout = call.data.get('timeout', 300)
     
-    _LOGGER.error(f"🔥 entity_id: {entity_id}")
-    _LOGGER.error(f"🔥 expected_code: {expected_code}")
-    _LOGGER.error(f"🔥 timeout: {timeout}")
+    _LOGGER.debug(f"entity_id: {entity_id}, timeout: {timeout}")
     
     coordinator = await find_coordinator_by_entity_id(hass, entity_id)
     
@@ -1207,7 +1216,6 @@ async def async_start_qr_scan(call: ServiceCall, hass: HomeAssistant) -> None:
             {
                 "title": "🔍 QR сканирование запущено",
                 "message": f"Сканирование запущено для камеры {entity_id}\n"
-                          f"Ожидаемый код: {expected_code}\n"
                           f"Таймаут: {timeout} сек\n"
                           f"ID: {result.get('scan_id')}",
                 "notification_id": f"qr_scan_start_{int(time.time())}"
@@ -1348,6 +1356,9 @@ async def async_osd_upload_image(call: ServiceCall, hass: HomeAssistant) -> None
     opacity = call.data.get("opacity", 255)
     posx = call.data.get("posx")
     posy = call.data.get("posy")
+    
+    if image_path:
+        _ensure_allowed_path(hass, image_path)
     
     if not image_path or not os.path.exists(image_path):
         _LOGGER.error(f"Image file not found: {image_path}")

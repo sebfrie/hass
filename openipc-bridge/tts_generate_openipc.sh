@@ -3,7 +3,7 @@
 # Используется внутри аддона
 
 MESSAGE="$1"
-LANG="${2:-ru}"
+LANG_CODE="${2:-ru}"
 FILENAME="$3"
 
 if [ -z "$MESSAGE" ] || [ -z "$FILENAME" ]; then
@@ -11,27 +11,30 @@ if [ -z "$MESSAGE" ] || [ -z "$FILENAME" ]; then
     exit 1
 fi
 
-TIMESTAMP=$(date +%s)
-TEMP_MP3="/tmp/tts_${TIMESTAMP}.mp3"
+if ! [[ "$LANG_CODE" =~ ^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,4})?$ ]]; then
+    echo "Invalid language code"
+    exit 1
+fi
 
-# Генерируем TTS через gTTS
-python3 -c "
+TEMP_MP3="$(mktemp /tmp/tts_XXXXXX.mp3)" || exit 1
+trap 'rm -f "$TEMP_MP3"' EXIT
+
+# Генерируем TTS через gTTS. Текст и язык передаются аргументами (argv),
+# а не подставляются в исходный код Python.
+python3 - "$MESSAGE" "$LANG_CODE" "$TEMP_MP3" <<'PY' || exit 1
 import sys
 try:
     from gtts import gTTS
-    tts = gTTS(text='''$MESSAGE''', lang='$LANG', slow=False)
-    tts.save('$TEMP_MP3')
+    text, lang, out = sys.argv[1:4]
+    gTTS(text=text, lang=lang, slow=False).save(out)
     print('SUCCESS')
 except Exception as e:
     print(f'ERROR: {e}')
     sys.exit(1)
-" || exit 1
+PY
 
 # Конвертируем в PCM 8000Hz, 16bit, mono
 ffmpeg -y -i "$TEMP_MP3" -ar 8000 -ac 1 -f s16le "$FILENAME" 2>/dev/null || exit 1
-
-# Удаляем временный файл
-rm -f "$TEMP_MP3"
 
 echo "✅ PCM файл создан: $FILENAME"
 exit 0

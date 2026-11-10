@@ -8,7 +8,13 @@ echo "$(date): Starting up..."
 
 # Создаем директорию для HLS сегментов
 mkdir -p /tmp/hls
-chmod 777 /tmp/hls
+chmod 755 /tmp/hls
+mkdir -p /media/openipc/recordings /media/openipc/snapshots /media/openipc/exports /media/openipc/logos
+
+# Remote access to the API/Web UI requires the access_password option (localhost is trusted)
+if [ -z "$(bashio::config 'access_password')" ]; then
+    echo "$(date): ⚠️ access_password is empty - remote requests to port 5000 are rejected until it is set"
+fi
 
 # Безопасно добавляем системные пути
 if [ -d "/usr/lib/python3.12/site-packages" ]; then

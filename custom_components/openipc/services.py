@@ -17,7 +17,7 @@ _LOGGER = logging.getLogger(__name__)
 # Схемы сервисов
 START_QR_SCAN_SCHEMA = vol.Schema({
     vol.Required('entity_id'): cv.entity_id,
-    vol.Optional('expected_code', default='a4625vol'): cv.string,
+    vol.Required('expected_code'): vol.All(cv.string, vol.Length(min=1)),
     vol.Optional('timeout', default=300): vol.Coerce(int),
 })
 

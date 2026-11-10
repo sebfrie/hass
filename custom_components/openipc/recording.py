@@ -110,8 +110,9 @@ async def record_to_ha_media(coordinator, duration: int, method: str = "snapshot
     # Полный путь для сохранения
     if hasattr(coordinator, 'recorder') and coordinator.recorder:
         await coordinator.recorder.ensure_folder_exists()
-        folder = coordinator.recorder.record_folder
-        full_path = folder / filename
+        full_path = coordinator.recorder.resolve_recording_path(filename)
+        if full_path is None:
+            return {"success": False, "error": "Invalid recording filename"}
     else:
         full_path = Path(f"/config/media/openipc_recordings/{camera_name}/{filename}")
         full_path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,8 +211,9 @@ async def record_and_send_telegram(coordinator, duration: int, method: str = "sn
         # Полный путь для сохранения
         if hasattr(coordinator, 'recorder') and coordinator.recorder:
             await coordinator.recorder.ensure_folder_exists()
-            folder = coordinator.recorder.record_folder
-            full_path = folder / filename
+            full_path = coordinator.recorder.resolve_recording_path(filename)
+            if full_path is None:
+                return {"success": False, "error": "Invalid recording filename"}
         else:
             full_path = Path(f"/config/media/openipc_recordings/{camera_name}/{filename}")
             full_path.parent.mkdir(parents=True, exist_ok=True)

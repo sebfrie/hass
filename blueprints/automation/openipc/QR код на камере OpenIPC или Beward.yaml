@@ -94,7 +94,7 @@ action:
         sequence:
           - variables:
               qr_data: "{{ trigger.event.data.data }}"
-              code_valid: "{{ expected == '' or expected in qr_data }}"
+              code_valid: "{{ expected | length > 0 and expected in qr_data }}"
           - service: media_player.play_media
             target:
               entity_id: "{{ media }}"
