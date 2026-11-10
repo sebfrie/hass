@@ -15,7 +15,6 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/Ripthulhu/OpenIPC-HASS/issues",
   "requirements": [
-    "aiohttp>=3.8.0",
     "aiofiles>=23.2.0",
     "beward==1.1.4",
     "asyncssh>=2.14.0"
