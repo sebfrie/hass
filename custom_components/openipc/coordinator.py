@@ -29,6 +29,7 @@ from .const import (
 )
 from .recorder import OpenIPCRecorder
 from .addon import OpenIPCAddonManager
+from .api_ha import async_register_api
 from .osd_manager import OpenIPCOSDManager
 
 _LOGGER = logging.getLogger(__name__)
@@ -177,6 +178,8 @@ class OpenIPCDataUpdateCoordinator(DataUpdateCoordinator):
                     found = await self.addon.async_discover_addon()
                     if found:
                         self.use_addon = True
+                        # The add-on reads the camera list (with credentials) from here
+                        await async_register_api(self.hass)
                         _LOGGER.info(f"✅ OpenIPC Bridge addon discovered and connected! (attempt {attempt + 1})")
                         
                         # Если есть QR сканер, обновляем его

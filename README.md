@@ -241,7 +241,12 @@ action:
 
 **Camera import from HA not working:**
 - Verify `http` is listed in `manifest.json` dependencies
-- Check the API endpoint: `http://[HA_IP]:8123/api/openipc/cameras`
+- The API endpoint `/api/openipc/cameras` is only registered once the integration has found the addon, so reload the integration after installing the addon
+- It answers only the Supervisor (the addon's requests go through it); a browser or a long-lived token gets `403`, because the answer contains the camera passwords
+
+**"SSH host key changed" in Repairs:**
+- The firmware update entity pins the camera's SSH host key on first contact and refuses a different key afterwards, so the root password is never sent to another device on the camera's address
+- A factory reset of the camera or a different camera on the same IP address explains a new key; then submit the repair and the next connection pins the current key
 
 ---
 

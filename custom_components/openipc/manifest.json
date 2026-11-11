@@ -25,10 +25,13 @@
       "manufacturer": "OpenIPC"
     }
   ],
-  "version": "2.4.1",
+  "version": "2.4.2",
   "zeroconf": [
     "_openipc._tcp.local.",
-    "_http._tcp.local.",
+    {
+      "type": "_http._tcp.local.",
+      "name": "openipc*"
+    },
     "_beward._tcp.local."
   ]
 }

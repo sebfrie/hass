@@ -4,8 +4,13 @@ import logging
 import re
 import subprocess
 import os
+from pathlib import Path
 from typing import Optional
+
+import aiohttp
+
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,14 +43,12 @@ class OpenIPCAudio:
     async def async_test_connection(self) -> bool:
         """Test connection to audio endpoint."""
         try:
-            import aiohttp
             auth = aiohttp.BasicAuth(self.username, self.password)
             url = f"http://{self.host}/play_audio"
-            
-            async with aiohttp.ClientSession() as session:
-                async with session.head(url, auth=auth, timeout=5) as response:
-                    self._available = response.status in [200, 401]
-                    return self._available
+            session = async_get_clientsession(self.hass)
+            async with session.head(url, auth=auth, timeout=aiohttp.ClientTimeout(total=5)) as response:
+                self._available = response.status in [200, 401]
+                return self._available
         except Exception as err:
             _LOGGER.debug("OpenIPC audio endpoint not available: %s", err)
             self._available = False
@@ -58,35 +61,24 @@ class OpenIPCAudio:
             return False
 
         _LOGGER.info("🔊 Playing PCM file on OpenIPC camera: %s", pcm_file_path)
-        
-        return await self.hass.async_add_executor_job(
-            self._play_pcm_sync, pcm_file_path
-        )
 
-    def _play_pcm_sync(self, pcm_file_path: str) -> bool:
-        """Synchronous method to play PCM using curl."""
-        import subprocess
-        
-        url = f"http://{self.host}/play_audio"
-        cmd = [
-            "curl", "-s", "-u", f"{self.username}:{self.password}",
-            "--data-binary", f"@{pcm_file_path}",
-            url
-        ]
-        
+        # Sent with HA's HTTP session: the password stays out of the process list
+        data = await self.hass.async_add_executor_job(Path(pcm_file_path).read_bytes)
+        session = async_get_clientsession(self.hass)
         try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            if result.returncode == 0:
-                _LOGGER.info("✅ PCM played successfully on OpenIPC camera")
-                return True
-            else:
-                _LOGGER.error("❌ Failed to play PCM: %s", result.stderr)
+            async with session.post(
+                f"http://{self.host}/play_audio",
+                data=data,
+                auth=aiohttp.BasicAuth(self.username, self.password),
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as response:
+                if response.status < 400:
+                    _LOGGER.info("✅ PCM played successfully on OpenIPC camera")
+                    return True
+                _LOGGER.error("❌ Failed to play PCM: HTTP %s", response.status)
                 return False
-        except subprocess.TimeoutExpired:
-            _LOGGER.error("Timeout playing PCM")
-            return False
-        except Exception as e:
-            _LOGGER.error("Error playing PCM: %s", e)
+        except (aiohttp.ClientError, TimeoutError) as err:
+            _LOGGER.error("Error playing PCM: %s", err)
             return False
 
     async def async_generate_and_play_tts(self, message: str, language: str = "ru") -> bool:

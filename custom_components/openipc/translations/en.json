@@ -23,5 +23,18 @@
     "abort": {
       "already_configured": "Camera already configured"
     }
+  },
+  "issues": {
+    "ssh_host_key_changed": {
+      "title": "SSH host key of {name} changed",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "SSH host key of {name} changed",
+            "description": "The camera at {host} presented a different SSH host key than the one seen on first contact. Firmware updates and the firmware version check are blocked until you decide.\n\nThis is expected after a factory reset of the camera or when another camera now uses this address. Otherwise another device may be posing as the camera to capture its password.\n\nSubmit only if you know why the key changed. The next connection then trusts the key the camera presents at that time."
+          }
+        }
+      }
+    }
   }
 }

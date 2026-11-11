@@ -15,6 +15,8 @@ CONF_RTSP_PORT = "rtsp_port"
 CONF_STREAM_PROFILE = "stream_profile"
 CONF_RECORD_PATH = "record_path"
 CONF_RECORD_FORMAT = "record_format"
+# SSH host key of the camera, pinned on first contact (OpenSSH public key line)
+CONF_SSH_HOST_KEY = "ssh_host_key"
 
 # Device types
 CONF_DEVICE_TYPE = "device_type"
