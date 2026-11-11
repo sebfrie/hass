@@ -12,7 +12,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check tag matches manifest version
         run: |
           manifest=$(jq -r .version custom_components/openipc/manifest.json)
