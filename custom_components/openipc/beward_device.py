@@ -359,7 +359,7 @@ class OpenIPCBewardDevice:
                 "-f", "null",
                 "-"
             ]
-            _LOGGER.debug(f"Checking RTSP stream: {self.rtsp_url_main}")
+            _LOGGER.debug("Checking RTSP stream of Beward at %s", self.host)
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -372,7 +372,9 @@ class OpenIPCBewardDevice:
             if success:
                 _LOGGER.info(f"✅ RTSP stream available for Beward at {self.host}")
             else:
-                error_msg = stderr.decode() if stderr else "Unknown error"
+                error_msg = stderr.decode(errors="replace") if stderr else "Unknown error"
+                if self.password:  # ffmpeg repeats the input URL, password included
+                    error_msg = error_msg.replace(self.password, "***")
                 _LOGGER.warning(f"❌ RTSP stream not available for Beward at {self.host}: {error_msg[:200]}")
             
             return success

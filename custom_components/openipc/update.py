@@ -15,10 +15,11 @@ from homeassistant.components.update import (
     UpdateEntityFeature,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN
+from .const import CONF_SSH_HOST_KEY, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -197,16 +198,59 @@ class OpenIPCFirmwareUpdate(CoordinatorEntity, UpdateEntity):
             self._attr_in_progress = False
             self.async_write_ha_state()
 
+    @property
+    def _host_key_issue_id(self) -> str:
+        return f"ssh_host_key_changed_{self.entry.entry_id}"
+
     async def _connect(self):
-        # Cameras have no stable host keys to pin, so host verification is skipped
-        return await asyncssh.connect(
-            self.coordinator.host,
-            port=SSH_PORT,
-            username=self.coordinator.username,
-            password=self.coordinator.password,
-            known_hosts=None,
-            connect_timeout=SSH_TIMEOUT,
-        )
+        """Open an SSH session, trusting only the host key seen on first contact.
+
+        The first connection pins the camera's host key in the config entry
+        (trust on first use). Afterwards a different key is refused and raised
+        as a repair issue, so the root password is never sent to a device that
+        merely took over the camera's address. The key survives a sysupgrade;
+        a factory reset of the camera creates a new one.
+        """
+        host = self.coordinator.host
+        pinned = self.entry.data.get(CONF_SSH_HOST_KEY)
+        known_hosts = ([asyncssh.import_public_key(pinned)], [], []) if pinned else None
+        try:
+            conn = await asyncssh.connect(
+                host,
+                port=SSH_PORT,
+                username=self.coordinator.username,
+                password=self.coordinator.password,
+                known_hosts=known_hosts,
+                connect_timeout=SSH_TIMEOUT,
+            )
+        except asyncssh.HostKeyNotVerifiable as err:
+            ir.async_create_issue(
+                self.hass,
+                DOMAIN,
+                self._host_key_issue_id,
+                is_fixable=True,
+                severity=ir.IssueSeverity.ERROR,
+                translation_key="ssh_host_key_changed",
+                translation_placeholders={"name": self.entry.title, "host": host},
+                data={"entry_id": self.entry.entry_id},
+            )
+            raise HomeAssistantError(
+                f"SSH host key of {host} does not match the pinned key, "
+                "see Settings > System > Repairs"
+            ) from err
+
+        if pinned:
+            ir.async_delete_issue(self.hass, DOMAIN, self._host_key_issue_id)
+        elif (key := conn.get_server_host_key()) is not None:
+            self.hass.config_entries.async_update_entry(
+                self.entry,
+                data={
+                    **self.entry.data,
+                    CONF_SSH_HOST_KEY: key.export_public_key().decode().strip(),
+                },
+            )
+            _LOGGER.info("Pinned SSH host key of %s (%s)", host, key.get_algorithm())
+        return conn
 
     async def _read_installed_build(self) -> str | None:
         async with await self._connect() as conn:

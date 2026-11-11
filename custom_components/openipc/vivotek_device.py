@@ -110,7 +110,7 @@ class OpenIPCVivotekDevice:
                 tmp_path
             ]
             
-            _LOGGER.debug(f"Running ffmpeg: {' '.join(cmd)}")
+            _LOGGER.debug("Running ffmpeg for an RTSP snapshot from %s", self.host)
             
             # Запускаем ffmpeg
             process = await asyncio.create_subprocess_exec(
@@ -138,7 +138,9 @@ class OpenIPCVivotekDevice:
                 else:
                     _LOGGER.warning(f"Snapshot too small: {len(data)} bytes")
             else:
-                error_msg = stderr.decode() if stderr else "Unknown error"
+                error_msg = stderr.decode(errors="replace") if stderr else "Unknown error"
+                if self.password:  # ffmpeg repeats the input URL, password included
+                    error_msg = error_msg.replace(self.password, "***")
                 _LOGGER.error(f"❌ FFmpeg error: {error_msg[:200]}")
                 
         except Exception as err:

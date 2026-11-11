@@ -9,8 +9,8 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import device_registry as dr
+from homeassistant.helpers import issue_registry as ir
 
-from .api_ha import async_register_api
 from .const import DOMAIN
 from .coordinator import OpenIPCDataUpdateCoordinator
 from .services import async_register_services
@@ -74,8 +74,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     await async_register_services(hass)
 
-    await async_register_api(hass)
-    _LOGGER.info("OpenIPC API endpoints registered")
+    # The cameras API (it returns credentials) is registered by the coordinator
+    # only once the OpenIPC Bridge add-on is found.
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
@@ -112,6 +112,7 @@ async def async_migrate_entry(hass: HomeAssistant, config_entry: ConfigEntry) ->
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Handle removal of an entry."""
+    ir.async_delete_issue(hass, DOMAIN, f"ssh_host_key_changed_{entry.entry_id}")
     try:
         device_registry = dr.async_get(hass)
         device_registry.async_clear_config_entry(entry.entry_id)

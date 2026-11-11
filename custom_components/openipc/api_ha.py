@@ -3,7 +3,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.components.http import HomeAssistantView
 import logging
 
+from .const import DOMAIN
+
 _LOGGER = logging.getLogger(__name__)
+
+DATA_API_REGISTERED = f"{DOMAIN}_cameras_api_registered"
 
 class OpenIPCCamerasView(HomeAssistantView):
     """View to return list of OpenIPC cameras (incl. credentials) for addon."""
@@ -12,17 +16,23 @@ class OpenIPCCamerasView(HomeAssistantView):
     name = "api:openipc:cameras"
     # Authentication is enforced by Home Assistant itself: the token must be a
     # valid HA access token. The addon reaches this via the Supervisor proxy,
-    # which authenticates as the (admin) Supervisor system user.
+    # which authenticates as the Supervisor system user.
     requires_auth = True
     
     async def get(self, request):
         """Handle GET request."""
         hass = request.app["hass"]
         
-        # The response contains camera credentials, so admins only
+        # The response contains camera credentials. Only system-generated admin
+        # users get them: in practice the Supervisor, through which the bridge
+        # add-on calls. Accounts of people and their long-lived tokens are
+        # refused, so a leaked token or a script in a dashboard cannot read them.
         user = request.get("hass_user")
-        if user is None or not user.is_admin:
-            _LOGGER.warning("Rejected non-admin access to cameras API")
+        if user is None or not (user.is_admin and user.system_generated):
+            _LOGGER.warning(
+                "Rejected access to the cameras API by %s",
+                user.name if user else "an unknown user",
+            )
             return self.json(
                 {"success": False, "error": "Forbidden"}, status_code=403
             )
@@ -37,8 +47,6 @@ class OpenIPCCamerasView(HomeAssistantView):
 
 async def async_get_cameras(hass: HomeAssistant) -> list:
     """Получить список всех камер OpenIPC."""
-    from . import DOMAIN
-    
     cameras = []
     
     for entry_id, coordinator in hass.data[DOMAIN].items():
@@ -86,6 +94,9 @@ async def async_get_cameras(hass: HomeAssistant) -> list:
     return cameras
 
 async def async_register_api(hass: HomeAssistant) -> None:
-    """Зарегистрировать API эндпоинты."""
+    """Register the cameras API once; only the OpenIPC Bridge add-on uses it."""
+    if hass.data.get(DATA_API_REGISTERED):
+        return
+    hass.data[DATA_API_REGISTERED] = True
     hass.http.register_view(OpenIPCCamerasView)
     _LOGGER.info("✅ OpenIPC API endpoints registered at /api/openipc/cameras")
