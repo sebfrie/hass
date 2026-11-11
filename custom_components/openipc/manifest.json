@@ -1,7 +1,7 @@
 {
   "domain": "openipc",
   "name": "OpenIPC Camera",
-  "codeowners": ["@Ripthulhu"],
+  "codeowners": ["@sebfrie"],
   "config_flow": true,
   "dependencies": [
     "stream",
@@ -10,10 +10,10 @@
     "media_player",
     "http"
   ],
-  "documentation": "https://github.com/Ripthulhu/OpenIPC-HASS",
+  "documentation": "https://github.com/sebfrie/hass",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/Ripthulhu/OpenIPC-HASS/issues",
+  "issue_tracker": "https://github.com/sebfrie/hass/issues",
   "requirements": [
     "aiofiles>=23.2.0",
     "beward==1.1.4",
