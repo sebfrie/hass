@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Проверка установленных модулей внутри аддона"""
+"""Check installed modules inside the add-on"""
 import sys
 import importlib
 
 def check_module(module_name):
-    """Проверяет наличие модуля"""
+    """Check that a module is available"""
     try:
         module = importlib.import_module(module_name)
         version = getattr(module, '__version__', 'unknown')
@@ -15,9 +15,9 @@ def check_module(module_name):
         return False
 
 def main():
-    """Главная функция"""
+    """Main function"""
     print("="*50)
-    print("Проверка Python модулей внутри аддона")
+    print("Checking Python modules inside the add-on")
     print("="*50)
     
     modules = [
@@ -37,10 +37,10 @@ def main():
     
     print("="*50)
     if failed:
-        print(f"❌ Провалено модулей: {len(failed)}")
+        print(f"❌ Failed modules: {len(failed)}")
         sys.exit(1)
     else:
-        print("✅ Все модули загружены успешно!")
+        print("✅ All modules loaded successfully!")
         sys.exit(0)
 
 if __name__ == "__main__":

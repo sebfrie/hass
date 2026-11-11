@@ -1,5 +1,5 @@
 #!/bin/bash
-# Скрипт для генерации речи через отдельный RHVoice-аддон (ha-rhvoice-addon)
+# Script for generating speech via a separate RHVoice add-on (ha-rhvoice-addon)
 
 MESSAGE="$1"
 LANG_CODE="${2:-ru}"
@@ -18,7 +18,7 @@ fi
 TEMP_WAV="$(mktemp /tmp/tts_XXXXXX.wav)" || exit 1
 trap 'rm -f "$TEMP_WAV"' EXIT
 
-# Определяем голос в зависимости от языка
+# Choose the voice depending on the language
 if [ "$LANG_CODE" = "ru" ]; then
     VOICE="anna"
 elif [ "$LANG_CODE" = "en" ]; then
@@ -27,13 +27,13 @@ else
     VOICE="anna"
 fi
 
-# JSON формируется через json.dumps (текст передаётся аргументом), а не конкатенацией строк
+# JSON is built via json.dumps (the text is passed as an argument), not by string concatenation
 PAYLOAD="$(python3 -c 'import json, sys; print(json.dumps({"text": sys.argv[1], "voice": sys.argv[2]}))' "$MESSAGE" "$VOICE")" || exit 1
 
 echo "🔊 Requesting RHVoice from separate addon: voice=$VOICE"
 
-# Пробуем разные адреса для доступа к RHVoice-аддону
-# Аддон definitio/ha-rhvoice-addon обычно доступен на порту 8080
+# Try different addresses for reaching the RHVoice add-on
+# The definitio/ha-rhvoice-addon add-on is usually available on port 8080
 RHVOICE_URLS=(
     "http://localhost:8080/say"
     "http://172.30.32.1:8080/say"
@@ -47,8 +47,8 @@ RESPONSE_MSG=""
 for URL in "${RHVOICE_URLS[@]}"; do
     echo "Trying RHVoice at $URL"
     
-    # Отправляем POST запрос с текстом (формат зависит от аддона)
-    # Для definitio/ha-rhvoice-addon используем JSON
+    # Send a POST request with the text (format depends on the add-on)
+    # For definitio/ha-rhvoice-addon we use JSON
     RESPONSE_MSG=$(curl -X POST "$URL" \
         -H "Content-Type: application/json" \
         --data-binary "$PAYLOAD" \
@@ -73,7 +73,7 @@ fi
 
 echo "✅ RHVoice WAV created: $TEMP_WAV"
 
-# Конвертируем в PCM 8000Hz, 16bit, mono для OpenIPC
+# Convert to PCM 8000Hz, 16bit, mono for OpenIPC
 ffmpeg -y -i "$TEMP_WAV" -ar 8000 -ac 1 -f s16le "$FILENAME" 2>/dev/null
 
 if [ ! -f "$FILENAME" ]; then

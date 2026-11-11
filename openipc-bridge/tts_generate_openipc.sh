@@ -1,6 +1,6 @@
 #!/bin/bash
-# Скрипт для генерации PCM для OpenIPC камер
-# Используется внутри аддона
+# Script for generating PCM for OpenIPC cameras
+# Used inside the add-on
 
 MESSAGE="$1"
 LANG_CODE="${2:-ru}"
@@ -19,8 +19,8 @@ fi
 TEMP_MP3="$(mktemp /tmp/tts_XXXXXX.mp3)" || exit 1
 trap 'rm -f "$TEMP_MP3"' EXIT
 
-# Генерируем TTS через gTTS. Текст и язык передаются аргументами (argv),
-# а не подставляются в исходный код Python.
+# Generate TTS via gTTS. The text and language are passed as arguments (argv)
+# rather than substituted into the Python source.
 python3 - "$MESSAGE" "$LANG_CODE" "$TEMP_MP3" <<'PY' || exit 1
 import sys
 try:
@@ -33,8 +33,8 @@ except Exception as e:
     sys.exit(1)
 PY
 
-# Конвертируем в PCM 8000Hz, 16bit, mono
+# Convert to PCM 8000Hz, 16bit, mono
 ffmpeg -y -i "$TEMP_MP3" -ar 8000 -ac 1 -f s16le "$FILENAME" 2>/dev/null || exit 1
 
-echo "✅ PCM файл создан: $FILENAME"
+echo "✅ PCM file created: $FILENAME"
 exit 0
