@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% block nav_home %}active{% endblock %}
-{% block title %}Главная{% endblock %}
+{% block title %}Home{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-md-12">
         <div class="card">
             <div class="card-header">
-                <i class="bi bi-info-circle"></i> Состояние сервиса
+                <i class="bi bi-info-circle"></i> Service status
             </div>
             <div class="card-body">
                 <div class="row" id="serviceStatus">
@@ -15,7 +15,7 @@
                         <div class="card text-center">
                             <div class="card-body">
                                 <h3 id="uptime">-</h3>
-                                <small>Время работы</small>
+                                <small>Uptime</small>
                             </div>
                         </div>
                     </div>
@@ -23,7 +23,7 @@
                         <div class="card text-center">
                             <div class="card-body">
                                 <h3 id="requests">-</h3>
-                                <small>Запросов</small>
+                                <small>Requests</small>
                             </div>
                         </div>
                     </div>
@@ -31,7 +31,7 @@
                         <div class="card text-center">
                             <div class="card-body">
                                 <h3 id="camerasCount">-</h3>
-                                <small>Камер</small>
+                                <small>Cameras</small>
                             </div>
                         </div>
                     </div>
@@ -39,7 +39,7 @@
                         <div class="card text-center">
                             <div class="card-body">
                                 <h3 id="activeScans">-</h3>
-                                <small>Активных сканирований</small>
+                                <small>Active scans</small>
                             </div>
                         </div>
                     </div>
@@ -53,19 +53,19 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
-                <i class="bi bi-camera"></i> Камеры
+                <i class="bi bi-camera"></i> Cameras
             </div>
             <div class="card-body">
                 <div class="list-group" id="camerasList">
-                    <!-- Загружается через JS -->
+                    <!-- Loaded via JS -->
                     <div class="text-center p-3">
                         <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Загрузка...</span>
+                            <span class="visually-hidden">Loading...</span>
                         </div>
                     </div>
                 </div>
                 <a href="/config" class="btn btn-primary mt-3">
-                    <i class="bi bi-gear"></i> Управление камерами
+                    <i class="bi bi-gear"></i> Manage cameras
                 </a>
             </div>
         </div>
@@ -74,19 +74,19 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header">
-                <i class="bi bi-qr-code-scan"></i> Последние QR-коды
+                <i class="bi bi-qr-code-scan"></i> Recent QR codes
             </div>
             <div class="card-body">
                 <div id="qrStats">
-                    <!-- Загружается через JS -->
+                    <!-- Loaded via JS -->
                     <div class="text-center p-3">
                         <div class="spinner-border text-primary" role="status">
-                            <span class="visually-hidden">Загрузка...</span>
+                            <span class="visually-hidden">Loading...</span>
                         </div>
                     </div>
                 </div>
                 <a href="/qr" class="btn btn-primary mt-3">
-                    <i class="bi bi-qr-code-scan"></i> Перейти к QR-сканеру
+                    <i class="bi bi-qr-code-scan"></i> Go to QR scanner
                 </a>
             </div>
         </div>
@@ -97,24 +97,24 @@
     <div class="col-md-12">
         <div class="card">
             <div class="card-header">
-                <i class="bi bi-activity"></i> Активные задачи
+                <i class="bi bi-activity"></i> Active tasks
             </div>
             <div class="card-body">
                 <table class="table" id="activeJobs">
                     <thead>
                         <tr>
                             <th>ID</th>
-                            <th>Камера</th>
-                            <th>Тип</th>
-                            <th>Прогресс</th>
-                            <th>Статус</th>
-                            <th>Действия</th>
+                            <th>Camera</th>
+                            <th>Type</th>
+                            <th>Progress</th>
+                            <th>Status</th>
+                            <th>Actions</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <!-- Загружается через JS -->
+                        <!-- Loaded via JS -->
                         <tr>
-                            <td colspan="6" class="text-center">Нет активных задач</td>
+                            <td colspan="6" class="text-center">No active tasks</td>
                         </tr>
                     </tbody>
                 </table>
@@ -155,7 +155,7 @@
                         `;
                     });
                 } else {
-                    list.innerHTML = '<div class="list-group-item text-center">Нет настроенных камер</div>';
+                    list.innerHTML = '<div class="list-group-item text-center">No configured cameras</div>';
                 }
             });
             
@@ -167,25 +167,25 @@
                     stats.innerHTML = `
                         <table class="table table-sm">
                             <tr>
-                                <td>Всего сканирований:</td>
+                                <td>Total scans:</td>
                                 <td><strong>${data.stats.total_requests || 0}</strong></td>
                             </tr>
                             <tr>
-                                <td>Успешных:</td>
+                                <td>Successful:</td>
                                 <td><strong class="text-success">${data.stats.successful_scans || 0}</strong></td>
                             </tr>
                             <tr>
-                                <td>Кодов найдено:</td>
+                                <td>Codes found:</td>
                                 <td><strong>${data.stats.total_codes_found || 0}</strong></td>
                             </tr>
                             <tr>
-                                <td>Последний код:</td>
+                                <td>Last code:</td>
                                 <td><strong>${data.stats.last_code || '—'}</strong></td>
                             </tr>
                         </table>
                     `;
                 } else {
-                    stats.innerHTML = '<p class="text-muted">Нет данных</p>';
+                    stats.innerHTML = '<p class="text-muted">No data</p>';
                 }
             });
             
@@ -217,19 +217,19 @@
                         `;
                     });
                 } else {
-                    tbody.innerHTML = '<tr><td colspan="6" class="text-center">Нет активных задач</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center">No active tasks</td></tr>';
                 }
             });
     }
     
     function stopJob(jobId) {
-        if (confirm('Остановить задачу?')) {
+        if (confirm('Stop the task?')) {
             fetch(`/api/stop_scan/${jobId}`, {method: 'POST'})
                 .then(() => loadDashboard());
         }
     }
     
-    // Загружаем при старте и каждые 5 секунд
+    // Load on start and every 5 seconds
     loadDashboard();
     setInterval(loadDashboard, 5000);
 </script>

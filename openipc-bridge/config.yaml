@@ -14,9 +14,9 @@ ports:
 ports_description:
   5000/tcp: "API and Web UI port"
 webui: "http://[HOST]:[PORT:5000]/"
-panel_icon: "mdi:camera-wireless"  # Иконка для боковой панели
-panel_title: "OpenIPC Bridge"      # Название в боковой панели
-panel_admin: false                  # Доступно всем пользователям
+panel_icon: "mdi:camera-wireless"  # Sidebar icon
+panel_title: "OpenIPC Bridge"      # Sidebar title
+panel_admin: false                  # Available to all users
 init: false
 hassio_api: true
 hassio_role: default

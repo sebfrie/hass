@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block nav_tts %}active{% endblock %}
-{% block title %}TTS настройки{% endblock %}
+{% block title %}TTS settings{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-md-12">
         <h2><i class="bi bi-mic"></i> Text-to-Speech</h2>
-        <p class="text-muted">Настройка голосовых уведомлений с поддержкой разных провайдеров</p>
+        <p class="text-muted">Voice notification setup with support for different providers</p>
     </div>
 </div>
 
@@ -14,30 +14,30 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header bg-primary text-white">
-                <i class="bi bi-mic"></i> Тест TTS
+                <i class="bi bi-mic"></i> TTS test
             </div>
             <div class="card-body">
                 <div class="mb-3">
-                    <label class="form-label">Камера</label>
+                    <label class="form-label">Camera</label>
                     <select class="form-select" id="ttsCamera">
-                        <option value="">Выберите камеру...</option>
+                        <option value="">Select a camera...</option>
                     </select>
                 </div>
                 
                 <div class="mb-3">
-                    <label class="form-label">Провайдер</label>
+                    <label class="form-label">Provider</label>
                     <select class="form-select" id="ttsProvider">
-                        <option value="google">Google TTS (облачный)</option>
-                        <option value="rhvoice">RHVoice (локальный)</option>
-                        <option value="yandex" disabled>Yandex SpeechKit (скоро)</option>
+                        <option value="google">Google TTS (cloud)</option>
+                        <option value="rhvoice">RHVoice (local)</option>
+                        <option value="yandex" disabled>Yandex SpeechKit (coming soon)</option>
                     </select>
-                    <small class="text-muted">RHVoice работает без интернета, голос Анна</small>
+                    <small class="text-muted">RHVoice works offline, voice Anna</small>
                 </div>
                 
                 <div class="mb-3">
-                    <label class="form-label">Язык</label>
+                    <label class="form-label">Language</label>
                     <select class="form-select" id="ttsLang">
-                        <option value="ru">Русский</option>
+                        <option value="ru">Russian</option>
                         <option value="en">English</option>
                         <option value="de">Deutsch</option>
                         <option value="fr">Français</option>
@@ -46,12 +46,12 @@
                 </div>
                 
                 <div class="mb-3">
-                    <label class="form-label">Текст</label>
-                    <textarea class="form-control" id="ttsText" rows="4">Привет, это тестовое сообщение. Проверка работы TTS.</textarea>
+                    <label class="form-label">Text</label>
+                    <textarea class="form-control" id="ttsText" rows="4">Hello, this is a test message. Checking that TTS works.</textarea>
                 </div>
                 
                 <button class="btn btn-success" onclick="testTTS()">
-                    <i class="bi bi-play"></i> Протестировать
+                    <i class="bi bi-play"></i> Test
                 </button>
                 
                 <div id="ttsStatus" class="mt-3" style="display: none;"></div>
@@ -60,18 +60,18 @@
         
         <div class="card mt-3">
             <div class="card-header bg-info text-white">
-                <i class="bi bi-mic"></i> Примеры текста
+                <i class="bi bi-mic"></i> Text examples
             </div>
             <div class="card-body">
                 <div class="list-group">
-                    <button class="list-group-item list-group-item-action" onclick="setText('Внимание, обнаружено движение')">
-                        Внимание, обнаружено движение
+                    <button class="list-group-item list-group-item-action" onclick="setText('Attention, motion detected')">
+                        Attention, motion detected
                     </button>
-                    <button class="list-group-item list-group-item-action" onclick="setText('Дверь открыта')">
-                        Дверь открыта
+                    <button class="list-group-item list-group-item-action" onclick="setText('Door is open')">
+                        Door is open
                     </button>
-                    <button class="list-group-item list-group-item-action" onclick="setText('Температура на улице 15 градусов')">
-                        Температура на улице 15 градусов
+                    <button class="list-group-item list-group-item-action" onclick="setText('The outdoor temperature is 15 degrees')">
+                        The outdoor temperature is 15 degrees
                     </button>
                     <button class="list-group-item list-group-item-action" onclick="setText('Hello, welcome to our smart home')">
                         Hello, welcome to our smart home
@@ -84,7 +84,7 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header bg-success text-white">
-                <i class="bi bi-info-circle"></i> Информация о провайдерах
+                <i class="bi bi-info-circle"></i> Provider information
             </div>
             <div class="card-body">
                 <div class="accordion" id="providersAccordion">
@@ -96,11 +96,11 @@
                         </h2>
                         <div id="collapseGoogle" class="accordion-collapse collapse show" data-bs-parent="#providersAccordion">
                             <div class="accordion-body">
-                                <p>✅ Облачный сервис, требует интернет</p>
-                                <p>✅ Поддерживает множество языков</p>
-                                <p>✅ Высокое качество синтеза</p>
-                                <p>❌ Медленнее из-за сети</p>
-                                <p>❌ Может быть недоступен без интернета</p>
+                                <p>✅ Cloud service, requires internet</p>
+                                <p>✅ Supports many languages</p>
+                                <p>✅ High synthesis quality</p>
+                                <p>❌ Slower due to network</p>
+                                <p>❌ May be unavailable without internet</p>
                             </div>
                         </div>
                     </div>
@@ -113,12 +113,12 @@
                         </h2>
                         <div id="collapseRHVoice" class="accordion-collapse collapse" data-bs-parent="#providersAccordion">
                             <div class="accordion-body">
-                                <p>✅ Работает полностью локально, без интернета</p>
-                                <p>✅ Мгновенная генерация</p>
-                                <p>✅ Русский голос "Анна" очень качественный</p>
-                                <p>✅ Поддерживает русский, английский, украинский</p>
-                                <p>❌ Меньше языков, чем у Google</p>
-                                <p>❌ Только мужские/женские голоса по умолчанию</p>
+                                <p>✅ Works fully locally, without internet</p>
+                                <p>✅ Instant generation</p>
+                                <p>✅ Russian voice "Anna" is very high quality</p>
+                                <p>✅ Supports Russian, English, Ukrainian</p>
+                                <p>❌ Fewer languages than Google</p>
+                                <p>❌ Only male/female default voices</p>
                             </div>
                         </div>
                     </div>
@@ -131,9 +131,9 @@
                         </h2>
                         <div id="collapseYandex" class="accordion-collapse collapse" data-bs-parent="#providersAccordion">
                             <div class="accordion-body">
-                                <p>⏳ В разработке</p>
-                                <p>Требуется API ключ Yandex Cloud</p>
-                                <p>Поддержка эмоций: neutral, good, evil</p>
+                                <p>⏳ In development</p>
+                                <p>Requires Yandex Cloud API key</p>
+                                <p>Emotion support: neutral, good, evil</p>
                             </div>
                         </div>
                     </div>
@@ -143,11 +143,11 @@
         
         <div class="card mt-3">
             <div class="card-header bg-warning">
-                <i class="bi bi-gear"></i> Настройки по умолчанию
+                <i class="bi bi-gear"></i> Default settings
             </div>
             <div class="card-body">
-                <p>Текущий провайдер по умолчанию: <strong id="defaultProvider">google</strong></p>
-                <p>Можно изменить в конфиге:</p>
+                <p>Current default provider: <strong id="defaultProvider">google</strong></p>
+                <p>Can be changed in the config:</p>
                 <pre class="bg-light p-2">
 tts:
   provider: "rhvoice"  # google, rhvoice, yandex
@@ -167,7 +167,7 @@ function loadCameras() {
         .then(r => r.json())
         .then(data => {
             const select = document.getElementById('ttsCamera');
-            select.innerHTML = '<option value="">Выберите камеру...</option>';
+            select.innerHTML = '<option value="">Select a camera...</option>';
             data.cameras.forEach(cam => {
                 select.innerHTML += `<option value="${cam.ip}">${cam.name} (${cam.ip})</option>`;
             });
@@ -185,19 +185,19 @@ function testTTS() {
     const provider = document.getElementById('ttsProvider').value;
     
     if (!camera) {
-        alert('Выберите камеру');
+        alert('Select a camera');
         return;
     }
     
     if (!text) {
-        alert('Введите текст');
+        alert('Enter text');
         return;
     }
     
     const statusDiv = document.getElementById('ttsStatus');
     statusDiv.style.display = 'block';
     statusDiv.className = 'alert alert-info';
-    statusDiv.innerHTML = '<i class="bi bi-hourglass"></i> Отправка...';
+    statusDiv.innerHTML = '<i class="bi bi-hourglass"></i> Sending...';
     
     fetch('/api/tts', {
         method: 'POST',
@@ -213,15 +213,15 @@ function testTTS() {
     .then(data => {
         if (data.success) {
             statusDiv.className = 'alert alert-success';
-            statusDiv.innerHTML = '<i class="bi bi-check-circle"></i> TTS отправлен успешно!';
+            statusDiv.innerHTML = '<i class="bi bi-check-circle"></i> TTS sent successfully!';
         } else {
             statusDiv.className = 'alert alert-danger';
-            statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Ошибка: ${data.error || 'Неизвестная ошибка'}`;
+            statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Error: ${data.error || 'Unknown error'}`;
         }
     })
     .catch(error => {
         statusDiv.className = 'alert alert-danger';
-        statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Ошибка: ${error.message}`;
+        statusDiv.innerHTML = `<i class="bi bi-exclamation-triangle"></i> Error: ${error.message}`;
     })
     .finally(() => {
         setTimeout(() => {
@@ -230,10 +230,10 @@ function testTTS() {
     });
 }
 
-// Загружаем камеры при старте
+// Load cameras on start
 loadCameras();
 
-// Обновляем список камер каждые 10 секунд
+// Refresh the camera list every 10 seconds
 setInterval(loadCameras, 10000);
 </script>
 {% endblock %}

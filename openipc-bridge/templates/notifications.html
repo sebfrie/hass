@@ -1,12 +1,12 @@
-<!-- templates/notifications.html (исправленная версия) -->
+<!-- templates/notifications.html (fixed version) -->
 {% extends "base.html" %}
 {% block nav_notifications %}active{% endblock %}
-{% block title %}Уведомления и алерты{% endblock %}
+{% block title %}Notifications and alerts{% endblock %}
 
 {% block content %}
 <div class="row">
     <div class="col-md-12">
-        <h2><i class="bi bi-bell"></i> Настройки уведомлений</h2>
+        <h2><i class="bi bi-bell"></i> Notification settings</h2>
     </div>
 </div>
 
@@ -25,39 +25,39 @@
                 </div>
                 
                 <div class="mb-3">
-                    <label class="form-label">Chat ID по умолчанию</label>
+                    <label class="form-label">Default Chat ID</label>
                     <input type="text" class="form-control" id="telegramDefaultChatId" 
                            value="{{ config.telegram.chat_id if config.telegram and config.telegram.chat_id else '' }}" 
                            placeholder="-1001234567890">
                 </div>
                 
                 <div class="mb-3">
-                    <label class="form-label">Качество видео по умолчанию</label>
+                    <label class="form-label">Default video quality</label>
                     <select class="form-select" id="telegramVideoQuality">
-                        <option value="original" {% if config.telegram and config.telegram.video_quality == 'original' %}selected{% endif %}>Исходное (без сжатия)</option>
-                        <option value="high" {% if not config.telegram or config.telegram.video_quality == 'high' %}selected{% endif %}>Высокое (720p)</option>
-                        <option value="medium" {% if config.telegram and config.telegram.video_quality == 'medium' %}selected{% endif %}>Среднее (480p)</option>
-                        <option value="low" {% if config.telegram and config.telegram.video_quality == 'low' %}selected{% endif %}>Низкое (360p) - экономия</option>
+                        <option value="original" {% if config.telegram and config.telegram.video_quality == 'original' %}selected{% endif %}>Original (no compression)</option>
+                        <option value="high" {% if not config.telegram or config.telegram.video_quality == 'high' %}selected{% endif %}>High (720p)</option>
+                        <option value="medium" {% if config.telegram and config.telegram.video_quality == 'medium' %}selected{% endif %}>Medium (480p)</option>
+                        <option value="low" {% if config.telegram and config.telegram.video_quality == 'low' %}selected{% endif %}>Low (360p) - saves space</option>
                     </select>
                 </div>
                 
                 <div class="mb-3">
-                    <label class="form-label">Максимальный размер видео</label>
+                    <label class="form-label">Maximum video size</label>
                     <div class="input-group">
                         <input type="number" class="form-control" id="telegramMaxSize" 
                                value="{{ config.telegram.max_size_mb if config.telegram and config.telegram.max_size_mb else 50 }}" 
                                min="1" max="50">
                         <span class="input-group-text">MB</span>
                     </div>
-                    <small class="text-muted">Telegram ограничение - 50 MB</small>
+                    <small class="text-muted">Telegram limit - 50 MB</small>
                 </div>
                 
                 <div class="mt-3">
                     <button class="btn btn-success" onclick="testTelegram()">
-                        <i class="bi bi-send"></i> Тест
+                        <i class="bi bi-send"></i> Test
                     </button>
                     <button class="btn btn-primary" onclick="saveTelegramSettings()">
-                        <i class="bi bi-save"></i> Сохранить
+                        <i class="bi bi-save"></i> Save
                     </button>
                 </div>
                 
@@ -69,19 +69,19 @@
     <div class="col-md-6">
         <div class="card">
             <div class="card-header bg-info text-white">
-                <i class="bi bi-envelope"></i> Email (в разработке)
+                <i class="bi bi-envelope"></i> Email (in development)
             </div>
             <div class="card-body">
-                <p class="text-muted">Функция будет доступна в следующих версиях</p>
+                <p class="text-muted">Feature will be available in future versions</p>
             </div>
         </div>
         
         <div class="card mt-3">
             <div class="card-header bg-warning">
-                <i class="bi bi-webcam"></i> Webhook (в разработке)
+                <i class="bi bi-webcam"></i> Webhook (in development)
             </div>
             <div class="card-body">
-                <p class="text-muted">Функция будет доступна в следующих версиях</p>
+                <p class="text-muted">Feature will be available in future versions</p>
             </div>
         </div>
     </div>
@@ -91,11 +91,11 @@
     <div class="col-md-12">
         <div class="card">
             <div class="card-header bg-success text-white">
-                <i class="bi bi-clock-history"></i> История отправки
+                <i class="bi bi-clock-history"></i> Sending history
             </div>
             <div class="card-body">
                 <div id="telegramHistory" style="max-height: 300px; overflow-y: auto;">
-                    <div class="text-center text-muted p-3">Загрузка истории...</div>
+                    <div class="text-center text-muted p-3">Loading history...</div>
                 </div>
             </div>
         </div>
@@ -103,7 +103,7 @@
 </div>
 
 <script>
-// ===== ЗАГРУЗКА ИСТОРИИ =====
+// ===== LOADING HISTORY =====
 function loadTelegramHistory() {
     fetch('/api/telegram/history')
         .then(r => r.json())
@@ -123,17 +123,17 @@ function loadTelegramHistory() {
                     </div>
                 `).join('');
             } else {
-                historyDiv.innerHTML = '<p class="text-muted text-center p-3">История пуста</p>';
+                historyDiv.innerHTML = '<p class="text-muted text-center p-3">History is empty</p>';
             }
         })
         .catch(err => {
             console.error('Error loading history:', err);
             document.getElementById('telegramHistory').innerHTML = 
-                '<p class="text-danger text-center p-3">Ошибка загрузки истории</p>';
+                '<p class="text-danger text-center p-3">Error loading history</p>';
         });
 }
 
-// ===== ТЕСТ TELEGRAM =====
+// ===== TELEGRAM TEST =====
 function testTelegram() {
     const token = document.getElementById('telegramToken').value;
     const chatId = document.getElementById('telegramDefaultChatId').value;
@@ -142,13 +142,13 @@ function testTelegram() {
     if (!token || !chatId) {
         resultDiv.style.display = 'block';
         resultDiv.className = 'alert alert-danger mt-3';
-        resultDiv.innerHTML = '❌ Введите Token и Chat ID';
+        resultDiv.innerHTML = '❌ Enter Token and Chat ID';
         return;
     }
     
     resultDiv.style.display = 'block';
     resultDiv.className = 'alert alert-info mt-3';
-    resultDiv.innerHTML = '⏳ Отправка тестового сообщения...';
+    resultDiv.innerHTML = '⏳ Sending test message...';
     
     fetch('/api/telegram/test', {
         method: 'POST',
@@ -159,16 +159,16 @@ function testTelegram() {
     .then(data => {
         if (data.success) {
             resultDiv.className = 'alert alert-success mt-3';
-            resultDiv.innerHTML = '✅ Тест успешен! Сообщение отправлено.';
+            resultDiv.innerHTML = '✅ Test successful! Message sent.';
             loadTelegramHistory();
         } else {
             resultDiv.className = 'alert alert-danger mt-3';
-            resultDiv.innerHTML = `❌ Ошибка: ${data.error || 'Неизвестная ошибка'}`;
+            resultDiv.innerHTML = `❌ Error: ${data.error || 'Unknown error'}`;
         }
     })
     .catch(err => {
         resultDiv.className = 'alert alert-danger mt-3';
-        resultDiv.innerHTML = `❌ Ошибка: ${err.message}`;
+        resultDiv.innerHTML = `❌ Error: ${err.message}`;
     });
     
     setTimeout(() => {
@@ -176,7 +176,7 @@ function testTelegram() {
     }, 5000);
 }
 
-// ===== СОХРАНЕНИЕ НАСТРОЕК =====
+// ===== SAVING SETTINGS =====
 function saveTelegramSettings() {
     const settings = {
         bot_token: document.getElementById('telegramToken').value,
@@ -188,7 +188,7 @@ function saveTelegramSettings() {
     const resultDiv = document.getElementById('telegramTestResult');
     resultDiv.style.display = 'block';
     resultDiv.className = 'alert alert-info mt-3';
-    resultDiv.innerHTML = '⏳ Сохранение настроек...';
+    resultDiv.innerHTML = '⏳ Saving settings...';
     
     fetch('/api/config/telegram', {
         method: 'POST',
@@ -199,15 +199,15 @@ function saveTelegramSettings() {
     .then(data => {
         if (data.success) {
             resultDiv.className = 'alert alert-success mt-3';
-            resultDiv.innerHTML = '✅ Настройки сохранены';
+            resultDiv.innerHTML = '✅ Settings saved';
         } else {
             resultDiv.className = 'alert alert-danger mt-3';
-            resultDiv.innerHTML = `❌ Ошибка: ${data.error}`;
+            resultDiv.innerHTML = `❌ Error: ${data.error}`;
         }
     })
     .catch(err => {
         resultDiv.className = 'alert alert-danger mt-3';
-        resultDiv.innerHTML = `❌ Ошибка: ${err.message}`;
+        resultDiv.innerHTML = `❌ Error: ${err.message}`;
     });
     
     setTimeout(() => {
@@ -215,7 +215,7 @@ function saveTelegramSettings() {
     }, 3000);
 }
 
-// ===== УВЕДОМЛЕНИЯ =====
+// ===== NOTIFICATIONS =====
 function showNotification(type, message) {
     const notification = document.createElement('div');
     notification.className = `alert alert-${type} alert-dismissible fade show position-fixed top-0 end-0 m-3`;
@@ -234,7 +234,7 @@ function showNotification(type, message) {
     }, 3000);
 }
 
-// Загружаем историю при загрузке страницы
+// Load history on page load
 document.addEventListener('DOMContentLoaded', function() {
     loadTelegramHistory();
 });

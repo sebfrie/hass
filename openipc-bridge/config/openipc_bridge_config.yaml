@@ -1,18 +1,18 @@
-# OpenIPC Bridge Configuration - автоматически создается при первом запуске
+# OpenIPC Bridge Configuration - created automatically on first run
 
-# Настройки камер
+# Camera settings
 cameras:
-  - name: "OpenIPC SIP"           # Название камеры
-    ip: "192.168.1.4"              # IP адрес
-    type: "openipc"                # Тип: openipc, beward, vivotek
-    username: "root"                # Логин
-    password: "CHANGE_ME"           # Пароль
-    snapshot_endpoints:             # Эндпоинты для получения снимков
+  - name: "OpenIPC SIP"           # Camera name
+    ip: "192.168.1.4"              # IP address
+    type: "openipc"                # Type: openipc, beward, vivotek
+    username: "root"                # Username
+    password: "CHANGE_ME"           # Password
+    snapshot_endpoints:             # Endpoints for fetching snapshots
       - "/image.jpg"
       - "/cgi-bin/api.cgi?cmd=Snap&channel=0"
-    tts_endpoint: "/play_audio"     # Эндпоинт для TTS
-    tts_format: "pcm"               # Формат: pcm (OpenIPC), alaw (Beward)
-    relay_endpoints:                 # Эндпоинты для реле (если есть)
+    tts_endpoint: "/play_audio"     # TTS endpoint
+    tts_format: "pcm"               # Format: pcm (OpenIPC), alaw (Beward)
+    relay_endpoints:                 # Relay endpoints (if any)
       relay1_on: "/cgi-bin/relay.cgi?relay=1&state=1"
       relay1_off: "/cgi-bin/relay.cgi?relay=1&state=0"
       relay2_on: "/cgi-bin/relay.cgi?relay=2&state=1"
@@ -34,19 +34,19 @@ cameras:
       relay2_on: "/cgi-bin/intercom_cgi?action=altdoor"
       relay2_off: "/cgi-bin/intercom_cgi?action=altdoor&close=1"
 
-# Настройки TTS
+# TTS settings
 tts:
   provider: "google"                 # google, rhvoice
   google:
     language: "ru"                   # ru, en, etc
-    slow: false                      # медленное произношение
+    slow: false                      # slow speech
   rhvoice:
-    voice: "anna"                    # Голос
+    voice: "anna"                    # Voice
     language: "ru"                   
-    speed: 1.0                       # Скорость 0.5-2.0
+    speed: 1.0                       # Speed 0.5-2.0
 
-# Настройки логирования
+# Logging settings
 logging:
   level: "INFO"                      # DEBUG, INFO, WARNING, ERROR
-  debug_qr: true                     # Сохранять отладочные снимки
-  max_debug_images: 100               # Максимум отладочных снимков
+  debug_qr: true                     # Save debug snapshots
+  max_debug_images: 100               # Maximum debug snapshots

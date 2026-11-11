@@ -33,8 +33,8 @@ except Exception as e:
     sys.exit(1)
 PY
 
-# Конвертируем в A-law (G.711A) 8000Hz, mono
+# Convert to A-law (G.711A) 8000Hz, mono
 ffmpeg -y -i "$TEMP_MP3" -ar 8000 -ac 1 -f alaw "$FILENAME" 2>/dev/null || exit 1
 
-echo "✅ A-law файл создан: $FILENAME"
+echo "✅ A-law file created: $FILENAME"
 exit 0

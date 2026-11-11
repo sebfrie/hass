@@ -21,7 +21,7 @@ Integration for managing OpenIPC, Beward, and Vivotek cameras in Home Assistant,
 
 ### 🔊 Text-to-Speech (TTS)
 - **Google TTS** — cloud-based, 30+ languages, high quality
-- **RHVoice** — local, offline, "Anna" voice (requires separate addon)
+- **RHVoice** — local, offline (requires separate addon)
 - Support for Beward (A-law) and OpenIPC (PCM)
 
 ### 📱 Notifications
@@ -38,7 +38,7 @@ Integration for managing OpenIPC, Beward, and Vivotek cameras in Home Assistant,
 
 ---
 
-## 🆕 What's New (March 2026)
+## 🆕 Recent Changes
 
 ### 🎥 New Recording System
 - Configure recording quality (`high`/`medium`/`low`), FPS (5–30), and segment duration (1 min – 1 hr) per camera
@@ -207,14 +207,17 @@ action:
 │   ├── run.sh
 │   ├── server.py
 │   ├── stream_monitor.py
+│   ├── stream_manager.py
 │   ├── recording_api.py
 │   ├── config_manager.py
+│   ├── security.py
 │   ├── camera_monitor.py
 │   ├── daily_reporter.py
 │   ├── tts_generate_openipc.sh
 │   ├── tts_generate.sh
 │   ├── tts_generate_rhvoice.sh
-│   └── templates/
+│   ├── templates/
+│   └── translations/
 └── blueprints/automation/openipc/
     ├── qr_scanner.yaml
     └── door_recording.yaml
