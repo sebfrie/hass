@@ -17,8 +17,9 @@ if [ -z "$(bashio::config 'access_password')" ]; then
 fi
 
 # Безопасно добавляем системные пути
-if [ -d "/usr/lib/python3.12/site-packages" ]; then
-    export PYTHONPATH="/usr/lib/python3.12/site-packages${PYTHONPATH:+:$PYTHONPATH}"
+SYS_SITE_PACKAGES=$(python3 -c 'import sys; print(f"/usr/lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages")' 2>/dev/null || true)
+if [ -n "$SYS_SITE_PACKAGES" ] && [ -d "$SYS_SITE_PACKAGES" ]; then
+    export PYTHONPATH="${SYS_SITE_PACKAGES}${PYTHONPATH:+:$PYTHONPATH}"
     echo "$(date): PYTHONPATH set to: $PYTHONPATH"
 fi
 
@@ -65,6 +66,10 @@ echo "========================================="
 
 # Держим контейнер запущенным
 while true; do
+    if ! kill -0 "$FLASK_PID" 2>/dev/null; then
+        echo "$(date): ❌ Flask server (PID: $FLASK_PID) exited unexpectedly!"
+        exit 1
+    fi
     # Проверяем, что ffmpeg процессы не зависли
     echo "$(date): OpenIPC Bridge running... (Flask PID: ${FLASK_PID:-unknown})"
     sleep 60
