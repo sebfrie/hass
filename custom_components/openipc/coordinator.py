@@ -135,7 +135,9 @@ class OpenIPCDataUpdateCoordinator(DataUpdateCoordinator):
         # Запускаем задачу для обнаружения аддона
         hass.async_create_task(self._async_discover_addon())
         
+        # Set by the duration selects, read by the record / QR scan buttons
         self.recording_duration = 60
+        self.qr_scan_duration = 30
         self._recording_task = None
         self._recording_end_time = None
         self._ha_recording_task = None

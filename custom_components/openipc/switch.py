@@ -127,7 +127,6 @@ class OpenIPCSwitch(CoordinatorEntity, SwitchEntity):
             "name": self.entry.data.get("name", "OpenIPC Camera"),
             "manufacturer": "OpenIPC",
             "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
         }
 
 
@@ -289,5 +288,4 @@ class OpenIPCRelaySwitch(CoordinatorEntity, SwitchEntity):
             "name": self.entry.data.get("name", "OpenIPC Camera"),
             "manufacturer": "OpenIPC",
             "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
         }

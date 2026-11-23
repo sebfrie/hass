@@ -171,7 +171,6 @@ class OpenIPCMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
             name=self.entry.data.get(CONF_NAME, "OpenIPC Camera"),
             manufacturer="OpenIPC",
             model=parsed.get("model", "Camera"),
-            sw_version=parsed.get("firmware", "Unknown"),
         )
 
     @property

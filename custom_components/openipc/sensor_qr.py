@@ -43,7 +43,6 @@ class QRScannerSensor(SensorEntity):
             name=self.entry.data.get("name", "OpenIPC Camera"),
             manufacturer="OpenIPC",
             model=parsed.get("model", "Camera"),
-            sw_version=parsed.get("firmware", "Unknown"),
         )
     
     async def async_update(self):

@@ -375,8 +375,6 @@ class OpenIPCSensor(CoordinatorEntity, SensorEntity):
             "name": self.entry.data.get("name", "OpenIPC Camera"),
             "manufacturer": "OpenIPC",
             "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
-            "hw_version": parsed.get("hostname", "Unknown"),
         }
 
 
@@ -538,7 +536,6 @@ class OpenIPCQRCodeSensor(CoordinatorEntity, SensorEntity):
             "name": self.entry.data.get("name", "OpenIPC Camera"),
             "manufacturer": "OpenIPC",
             "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
         }
 
 
@@ -587,7 +584,6 @@ class OpenIPCOsdSensor(CoordinatorEntity, SensorEntity):
             "name": self.entry.data.get("name", "OpenIPC Camera"),
             "manufacturer": "OpenIPC",
             "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
         }
 
 

@@ -172,6 +172,4 @@ class OpenIPCBinarySensor(CoordinatorEntity, BinarySensorEntity):
             "name": self.entry.data.get("name", "OpenIPC Camera"),
             "manufacturer": manufacturer,
             "model": model,
-            "sw_version": parsed.get("firmware", "Unknown"),
-            "hw_version": parsed.get("hostname", "Unknown"),
         }

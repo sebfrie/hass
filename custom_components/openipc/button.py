@@ -6,6 +6,7 @@ from datetime import datetime
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import (
@@ -25,15 +26,22 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
-# Длительности записи для кнопок (в секундах)
-RECORDING_PRESETS = {
-    "15s": 15,
-    "30s": 30,
-    "1m": 60,
-    "3m": 180,
-    "5m": 300,
-    "10m": 600,
-}
+# One button per function; the duration comes from the select entities
+RECORD_BUTTONS = (
+    # name, unique id suffix, icon, HA media method (None = camera SD), send to Telegram
+    ("Record (Camera SD)", "record_sd", "mdi:sd", None, False),
+    ("Record (HA Media)", "record_ha", "mdi:home-assistant", "snapshots", False),
+    ("Record (RTSP)", "record_rtsp", "mdi:video", "rtsp", False),
+    ("Record + Telegram", "telegram", "mdi:telegram", "snapshots", True),
+    ("Record + Telegram (RTSP)", "telegram_rtsp", "mdi:telegram", "rtsp", True),
+)
+
+# Per-duration buttons of earlier versions, removed from the entity registry
+LEGACY_BUTTON_IDS = {
+    f"{prefix}_{label}"
+    for prefix in ("record_sd", "record_ha", "record_rtsp", "telegram", "telegram_rtsp")
+    for label in ("15s", "30s", "1m", "3m", "5m", "10m")
+} | {"qr_scan_15", "qr_scan_30", "qr_scan_60"}
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up OpenIPC buttons."""
@@ -49,73 +57,21 @@ async def async_setup_entry(hass, entry, async_add_entities):
         OpenIPCButton(coordinator, entry, "Stop Recording", "record_stop", RECORD_STOP, "mdi:stop"),
     ])
     
-    # Кнопки для записи на SD карту камеры
-    for name, duration in RECORDING_PRESETS.items():
-        entities.append(
-            OpenIPCRecordTimerButton(
-                coordinator, entry, 
-                f"Record {name} (Camera SD)", 
-                f"record_sd_{name}", 
-                duration,
-                "mdi:sd"
-            )
-        )
-    
-    # Кнопки для записи в Home Assistant media
-    for name, duration in RECORDING_PRESETS.items():
-        entities.append(
-            OpenIPCHARecordButton(
-                coordinator, entry,
-                f"Record {name} (HA Media)",
-                f"record_ha_{name}",
-                duration,
-                "mdi:home-assistant"
-            )
-        )
-    
-    # Кнопки для RTSP записи в HA media
-    for name, duration in RECORDING_PRESETS.items():
-        entities.append(
-            OpenIPCRTSPRecordButton(
-                coordinator, entry,
-                f"Record {name} (RTSP)",
-                f"record_rtsp_{name}",
-                duration,
-                "mdi:video"
-            )
-        )
-    
-    # Кнопки для записи и отправки в Telegram
-    for name, duration in RECORDING_PRESETS.items():
-        entities.append(
-            OpenIPCTelegramRecordButton(
-                coordinator, entry,
-                f"Record {name} + Telegram",
-                f"telegram_{name}",
-                duration,
-                "mdi:telegram",
-                method="snapshots"
-            )
-        )
-    
-    # Кнопки для RTSP записи и отправки в Telegram
-    for name, duration in RECORDING_PRESETS.items():
-        entities.append(
-            OpenIPCTelegramRecordButton(
-                coordinator, entry,
-                f"Record {name} + Telegram (RTSP)",
-                f"telegram_rtsp_{name}",
-                duration,
-                "mdi:telegram",
-                method="rtsp"
-            )
-        )
-    
+    entities.extend(
+        OpenIPCRecordButton(coordinator, entry, *spec) for spec in RECORD_BUTTONS
+    )
+
+    registry = er.async_get(hass)
+    for reg_entry in er.async_entries_for_config_entry(registry, entry.entry_id):
+        if (
+            reg_entry.domain == "button"
+            and reg_entry.unique_id.removeprefix(f"{entry.entry_id}_") in LEGACY_BUTTON_IDS
+        ):
+            registry.async_remove(reg_entry.entity_id)
+
     # QR-код кнопки для всех камер
     entities.extend([
-        OpenIPCQRScanButton(coordinator, entry, 15, "15s"),
-        OpenIPCQRScanButton(coordinator, entry, 30, "30s"),
-        OpenIPCQRScanButton(coordinator, entry, 60, "1m"),
+        OpenIPCQRScanButton(coordinator, entry),
         OpenIPCQRModeButton(coordinator, entry, "single", "Mode Single", "mdi:qrcode-scan"),
         OpenIPCQRModeButton(coordinator, entry, "periodic", "Mode Periodic", "mdi:qrcode"),
         OpenIPCQRModeButton(coordinator, entry, "continuous", "Mode Continuous", "mdi:qrcode-edit"),
@@ -199,195 +155,70 @@ class OpenIPCButton(CoordinatorEntity, ButtonEntity):
             "name": self.entry.data.get("name", "OpenIPC Camera"),
             "manufacturer": "OpenIPC",
             "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
         }
 
 
-class OpenIPCRecordTimerButton(CoordinatorEntity, ButtonEntity):
-    """Button for timed recording on camera SD card."""
+class OpenIPCRecordButton(OpenIPCButton):
+    """Record for the duration chosen in the Recording Duration select."""
 
-    def __init__(self, coordinator, entry, name, button_id, duration, icon):
+    def __init__(self, coordinator, entry, name, button_id, icon, method, telegram):
         """Initialize the button."""
-        super().__init__(coordinator)
-        self.coordinator = coordinator
-        self.entry = entry
-        self.button_id = button_id
-        self.duration = duration
-        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} {name}"
-        self._attr_unique_id = f"{entry.entry_id}_{button_id}"
-        self._attr_icon = icon
-
-    async def async_press(self) -> None:
-        """Handle the button press."""
-        _LOGGER.info("Starting %d second recording on camera SD for %s", 
-                     self.duration, self.entry.data.get('name'))
-        
-        await self.coordinator.async_start_timed_recording(self.duration, save_to_ha=False)
-
-    @property
-    def device_info(self):
-        """Return device info."""
-        parsed = self.coordinator.data.get("parsed", {})
-        return {
-            "identifiers": {(DOMAIN, self.entry.entry_id)},
-            "name": self.entry.data.get("name", "OpenIPC Camera"),
-            "manufacturer": "OpenIPC",
-            "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
-        }
-
-
-class OpenIPCHARecordButton(CoordinatorEntity, ButtonEntity):
-    """Button for recording to Home Assistant media folder using snapshots."""
-
-    def __init__(self, coordinator, entry, name, button_id, duration, icon):
-        """Initialize the button."""
-        super().__init__(coordinator)
-        self.coordinator = coordinator
-        self.entry = entry
-        self.button_id = button_id
-        self.duration = duration
-        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} {name}"
-        self._attr_unique_id = f"{entry.entry_id}_{button_id}"
-        self._attr_icon = icon
-
-    async def async_press(self) -> None:
-        """Handle the button press."""
-        _LOGGER.info("Starting %d second recording to HA Media for %s (snapshots)", 
-                     self.duration, self.entry.data.get('name'))
-        
-        await self.coordinator.async_start_timed_recording(
-            self.duration, 
-            save_to_ha=True, 
-            method="snapshots"
-        )
-
-    @property
-    def device_info(self):
-        """Return device info."""
-        parsed = self.coordinator.data.get("parsed", {})
-        return {
-            "identifiers": {(DOMAIN, self.entry.entry_id)},
-            "name": self.entry.data.get("name", "OpenIPC Camera"),
-            "manufacturer": "OpenIPC",
-            "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
-        }
-
-
-class OpenIPCRTSPRecordButton(CoordinatorEntity, ButtonEntity):
-    """Button for recording to Home Assistant media folder using RTSP stream."""
-
-    def __init__(self, coordinator, entry, name, button_id, duration, icon):
-        """Initialize the button."""
-        super().__init__(coordinator)
-        self.coordinator = coordinator
-        self.entry = entry
-        self.button_id = button_id
-        self.duration = duration
-        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} {name}"
-        self._attr_unique_id = f"{entry.entry_id}_{button_id}"
-        self._attr_icon = icon
-
-    async def async_press(self) -> None:
-        """Handle the button press."""
-        _LOGGER.info("Starting %d second recording to HA Media for %s (RTSP)", 
-                     self.duration, self.entry.data.get('name'))
-        
-        await self.coordinator.async_start_timed_recording(
-            self.duration, 
-            save_to_ha=True, 
-            method="rtsp"
-        )
-
-    @property
-    def device_info(self):
-        """Return device info."""
-        parsed = self.coordinator.data.get("parsed", {})
-        return {
-            "identifiers": {(DOMAIN, self.entry.entry_id)},
-            "name": self.entry.data.get("name", "OpenIPC Camera"),
-            "manufacturer": "OpenIPC",
-            "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
-        }
-
-
-class OpenIPCTelegramRecordButton(CoordinatorEntity, ButtonEntity):
-    """Button for recording and sending to Telegram."""
-
-    def __init__(self, coordinator, entry, name, button_id, duration, icon, method="snapshots"):
-        """Initialize the button."""
-        super().__init__(coordinator)
-        self.coordinator = coordinator
-        self.entry = entry
-        self.button_id = button_id
-        self.duration = duration
+        super().__init__(coordinator, entry, name, button_id, None, icon)
         self.method = method
-        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} {name}"
-        self._attr_unique_id = f"{entry.entry_id}_{button_id}"
-        self._attr_icon = icon
+        self.telegram = telegram
 
     async def async_press(self) -> None:
         """Handle the button press."""
-        _LOGGER.info("Recording %d seconds and sending to Telegram for %s", 
-                     self.duration, self.entry.data.get('name'))
-        
-        if hasattr(self.coordinator, 'async_record_and_send_telegram'):
-            await self.coordinator.async_record_and_send_telegram(
-                self.duration, 
-                method=self.method,
-                caption=f"📹 Запись с камеры {self.entry.data.get('name')}\n⏱ {self.duration} секунд"
-            )
-        else:
-            _LOGGER.error("Telegram recording method not available")
+        duration = self.coordinator.recording_duration
+        name = self.entry.data.get("name")
+        _LOGGER.info("%s: %s for %d seconds", name, self.button_id, duration)
 
-    @property
-    def device_info(self):
-        """Return device info."""
-        parsed = self.coordinator.data.get("parsed", {})
-        return {
-            "identifiers": {(DOMAIN, self.entry.entry_id)},
-            "name": self.entry.data.get("name", "OpenIPC Camera"),
-            "manufacturer": "OpenIPC",
-            "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
-        }
+        if self.telegram:
+            await self.coordinator.async_record_and_send_telegram(
+                duration,
+                method=self.method,
+                caption=f"📹 Recording from {name}\n⏱ {duration} seconds",
+            )
+        elif self.method is None:
+            await self.coordinator.async_start_timed_recording(duration, save_to_ha=False)
+        else:
+            await self.coordinator.async_start_timed_recording(
+                duration, save_to_ha=True, method=self.method
+            )
 
 
 # ==================== QR Code Buttons ====================
 
 class OpenIPCQRScanButton(CoordinatorEntity, ButtonEntity):
-    """Button to manually trigger QR scan with timeout."""
+    """Button to start a QR scan for the duration chosen in the QR Scan Duration select."""
 
-    def __init__(self, coordinator, entry, duration: int = 30, duration_label: str = "30s"):
+    def __init__(self, coordinator, entry):
         """Initialize the button."""
         super().__init__(coordinator)
         self.coordinator = coordinator
         self.entry = entry
-        self.duration = duration
-        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} QR Scan ({duration_label})"
-        self._attr_unique_id = f"{entry.entry_id}_qr_scan_{duration}"
+        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} QR Scan"
+        self._attr_unique_id = f"{entry.entry_id}_qr_scan"
         self._attr_icon = "mdi:qrcode-scan"
         self._attr_entity_category = EntityCategory.CONFIG
 
     async def async_press(self) -> None:
         """Handle the button press."""
-        _LOGGER.info(f"📸 Manual QR scan triggered for {self.entry.data.get('name')} ({self.duration}s)")
-        
-        if hasattr(self.coordinator, 'qr_scanner'):
+        duration = self.coordinator.qr_scan_duration
+        _LOGGER.info("📸 Manual QR scan triggered for %s (%ds)", self.entry.data.get("name"), duration)
+
+        if self.coordinator.qr_scanner:
             await self.coordinator.qr_scanner.async_activate(
-                reason=f"manual_{self.duration}s",
-                timeout=self.duration
+                reason=f"manual_{duration}s",
+                timeout=duration
             )
-            
-            # Показываем уведомление
+
             await self.hass.services.async_call(
                 "persistent_notification",
                 "create",
                 {
                     "title": f"📸 QR Scan Activated - {self.entry.data.get('name')}",
-                    "message": f"QR сканирование включено на {self.duration} секунд",
+                    "message": f"QR scanning enabled for {duration} seconds",
                     "notification_id": f"openipc_qr_scan_{self.entry.entry_id}"
                 }
             )

@@ -2,6 +2,7 @@
 import logging
 from homeassistant.components.select import SelectEntity
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
@@ -22,32 +23,45 @@ RECORDING_DURATIONS = {
     "1 hour": 3600,
 }
 
-# Опции для select
-RECORDING_OPTIONS = list(RECORDING_DURATIONS.keys())
+QR_SCAN_DURATIONS = {
+    "15 seconds": 15,
+    "30 seconds": 30,
+    "1 minute": 60,
+}
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up OpenIPC select entities."""
     coordinator = hass.data[DOMAIN][entry.entry_id]
     
     entities = [
-        OpenIPCRecordingDurationSelect(coordinator, entry),
+        OpenIPCDurationSelect(
+            coordinator, entry, "Recording Duration", "recording_duration",
+            RECORDING_DURATIONS, "1 minute",
+        ),
+        OpenIPCDurationSelect(
+            coordinator, entry, "QR Scan Duration", "qr_scan_duration",
+            QR_SCAN_DURATIONS, "30 seconds", EntityCategory.CONFIG,
+        ),
     ]
     
     async_add_entities(entities)
 
-class OpenIPCRecordingDurationSelect(CoordinatorEntity, SelectEntity, RestoreEntity):
-    """Representation of a recording duration select entity."""
+class OpenIPCDurationSelect(CoordinatorEntity, SelectEntity, RestoreEntity):
+    """Duration used by the record / QR scan buttons, kept on the coordinator as `key`."""
 
-    def __init__(self, coordinator, entry):
+    def __init__(self, coordinator, entry, name, key, durations, default, entity_category=None):
         """Initialize the select entity."""
         super().__init__(coordinator)
         self.coordinator = coordinator
         self.entry = entry
-        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} Recording Duration"
-        self._attr_unique_id = f"{entry.entry_id}_recording_duration"
+        self._key = key
+        self._durations = durations
+        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} {name}"
+        self._attr_unique_id = f"{entry.entry_id}_{key}"
         self._attr_icon = "mdi:timer"
-        self._attr_options = RECORDING_OPTIONS
-        self._attr_current_option = "1 minute"  # Значение по умолчанию
+        self._attr_entity_category = entity_category
+        self._attr_options = list(durations)
+        self._attr_current_option = default
 
     async def async_added_to_hass(self) -> None:
         """Restore last state."""
@@ -57,7 +71,8 @@ class OpenIPCRecordingDurationSelect(CoordinatorEntity, SelectEntity, RestoreEnt
         last_state = await self.async_get_last_state()
         if last_state and last_state.state in self._attr_options:
             self._attr_current_option = last_state.state
-            _LOGGER.debug("Restored recording duration: %s", self._attr_current_option)
+            _LOGGER.debug("Restored %s: %s", self._key, self._attr_current_option)
+        setattr(self.coordinator, self._key, self._durations[self._attr_current_option])
 
     async def async_select_option(self, option: str) -> None:
         """Change the selected option."""
@@ -65,11 +80,9 @@ class OpenIPCRecordingDurationSelect(CoordinatorEntity, SelectEntity, RestoreEnt
             self._attr_current_option = option
             self.async_write_ha_state()
             
-            duration = RECORDING_DURATIONS[option]
-            _LOGGER.info("Recording duration set to %s (%d seconds)", option, duration)
-            
-            # Сохраняем в coordinator для использования другими компонентами
-            self.coordinator.recording_duration = duration
+            duration = self._durations[option]
+            _LOGGER.info("%s set to %s (%d seconds)", self._key, option, duration)
+            setattr(self.coordinator, self._key, duration)
 
     @property
     def current_option(self) -> str | None:
@@ -85,5 +98,4 @@ class OpenIPCRecordingDurationSelect(CoordinatorEntity, SelectEntity, RestoreEnt
             "name": self.entry.data.get("name", "OpenIPC Camera"),
             "manufacturer": "OpenIPC",
             "model": parsed.get("model", "Camera"),
-            "sw_version": parsed.get("firmware", "Unknown"),
         }

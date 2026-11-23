@@ -15,6 +15,7 @@ from homeassistant.components.update import (
     UpdateEntityFeature,
 )
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
@@ -34,6 +35,16 @@ HTTP_TIMEOUT = aiohttp.ClientTimeout(total=20)
 SSH_PORT = 22
 SSH_TIMEOUT = 15
 INSTALL_TIMEOUT = 900
+# After sysupgrade the camera reboots: wait, then poll SSH until it answers again
+REBOOT_GRACE = 60
+VERIFY_INTERVAL = 15
+VERIFY_ATTEMPTS = 60
+# os-release carries the build; ipcinfo names the SoC and the image sensor
+OS_INFO_CMD = (
+    "cat /etc/os-release; "
+    'echo "CHIP=$(ipcinfo --chip-name 2>/dev/null)"; '
+    'echo "SENSOR=$(ipcinfo --short-sensor 2>/dev/null)"'
+)
 MAX_NOTES_COMMITS = 40
 
 BUILD_RE = re.compile(r"^nightly-(\d{8})-([0-9a-f]+)$")
@@ -72,7 +83,12 @@ class OpenIPCFirmwareUpdate(CoordinatorEntity, UpdateEntity):
         self._attr_name = f"{entry.data.get('name', 'OpenIPC')} Firmware"
         self._attr_unique_id = f"{entry.entry_id}_firmware_update"
         self._installed: str | None = None
+        self._hardware: str | None = None
         self._latest: dict[str, Any] | None = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self._sync_device()
 
     @property
     def device_info(self):
@@ -112,10 +128,7 @@ class OpenIPCFirmwareUpdate(CoordinatorEntity, UpdateEntity):
 
     async def async_update(self) -> None:
         """Check the installed and the latest firmware build."""
-        try:
-            self._installed = await self._read_installed_build()
-        except Exception as err:
-            _LOGGER.debug("Cannot read firmware build over SSH: %s", err)
+        await self._async_read_installed()
 
         try:
             session = async_get_clientsession(self.hass)
@@ -175,8 +188,7 @@ class OpenIPCFirmwareUpdate(CoordinatorEntity, UpdateEntity):
         if not target or not BUILD_RE.match(target):
             raise HomeAssistantError("No OpenIPC firmware build available to install")
 
-        self._attr_in_progress = True
-        self.async_write_ha_state()
+        # in_progress is shown by UpdateEntity.async_install_with_progress
         try:
             async with await self._connect() as conn:
                 try:
@@ -187,16 +199,35 @@ class OpenIPCFirmwareUpdate(CoordinatorEntity, UpdateEntity):
                 except (asyncssh.ConnectionLost, asyncssh.DisconnectError):
                     # The camera reboots into the new firmware, dropping the session
                     _LOGGER.info("Camera disconnected during upgrade (expected)")
-                    return
-                if result.exit_status not in (0, None):
-                    raise HomeAssistantError(
-                        f"sysupgrade failed: {(result.stderr or result.stdout or '').strip()[-300:]}"
-                    )
+                else:
+                    if result.exit_status not in (0, None):
+                        raise HomeAssistantError(
+                            f"sysupgrade failed: {(result.stderr or result.stdout or '').strip()[-300:]}"
+                        )
         except (OSError, asyncssh.Error, asyncio.TimeoutError) as err:
             raise HomeAssistantError(f"Firmware update failed: {err}") from err
-        finally:
-            self._attr_in_progress = False
-            self.async_write_ha_state()
+
+        # Stop offering the build while the camera reboots; the check after the
+        # reboot puts the offer back if the camera still runs an older build.
+        self._installed = target
+        self.entry.async_create_background_task(
+            self.hass, self._async_verify_install(target), f"{self.entity_id} verify"
+        )
+
+    async def _async_verify_install(self, target: str) -> None:
+        """Read the build once the camera is back from the upgrade reboot."""
+        await asyncio.sleep(REBOOT_GRACE)
+        for _ in range(VERIFY_ATTEMPTS):
+            if await self._async_read_installed():
+                if self._installed != target:
+                    _LOGGER.warning(
+                        "%s runs %s after installing %s", self.entity_id, self._installed, target
+                    )
+                self.async_write_ha_state()
+                return
+            await asyncio.sleep(VERIFY_INTERVAL)
+        # shortcut: camera not back within ~15 min; the 6 h poll verifies later
+        _LOGGER.warning("%s did not come back after the firmware update", self.entity_id)
 
     @property
     def _host_key_issue_id(self) -> str:
@@ -252,11 +283,43 @@ class OpenIPCFirmwareUpdate(CoordinatorEntity, UpdateEntity):
             _LOGGER.info("Pinned SSH host key of %s (%s)", host, key.get_algorithm())
         return conn
 
-    async def _read_installed_build(self) -> str | None:
-        async with await self._connect() as conn:
-            result = await conn.run("cat /etc/os-release", check=False, timeout=SSH_TIMEOUT)
-        for line in (result.stdout or "").splitlines():
-            if line.startswith("BUILD_ID="):
-                return line.split("=", 1)[1].strip().strip('"')
-        return None
+    async def _async_read_installed(self) -> bool:
+        """Read build and hardware over SSH; False if the camera did not answer."""
+        try:
+            async with await self._connect() as conn:
+                result = await conn.run(OS_INFO_CMD, check=False, timeout=SSH_TIMEOUT)
+        except Exception as err:
+            _LOGGER.debug("Cannot read firmware build over SSH: %s", err)
+            return False
+        info = _parse_os_info(result.stdout)
+        self._installed = info.get("BUILD_ID")
+        self._hardware = " / ".join(
+            info[key].upper() for key in ("CHIP", "SENSOR") if info.get(key)
+        ) or None
+        self._sync_device()
+        return True
+
+    def _sync_device(self) -> None:
+        """Show firmware and hardware on the device page; keep known values otherwise."""
+        device_id = self.registry_entry and self.registry_entry.device_id
+        versions = {
+            key: value
+            for key, value in (
+                ("sw_version", self.installed_version),
+                ("hw_version", self._hardware),
+            )
+            if value
+        }
+        if device_id and versions:
+            dr.async_get(self.hass).async_update_device(device_id, **versions)
+
+
+def _parse_os_info(text: str | None) -> dict[str, str]:
+    """Parse KEY=value lines (os-release style, values optionally quoted)."""
+    info = {}
+    for line in (text or "").splitlines():
+        key, sep, value = line.partition("=")
+        if sep and (value := value.strip().strip('"')):
+            info[key.strip()] = value
+    return info
 

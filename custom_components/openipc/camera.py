@@ -59,7 +59,6 @@ class BaseCamera(CoordinatorEntity, Camera):
             "name": self.entry.data.get("name", "Camera"),
             "manufacturer": parsed.get("manufacturer", self._get_manufacturer()),
             "model": parsed.get("model", self._get_model()),
-            "sw_version": parsed.get("firmware", "Unknown"),
         }
     
     def _get_manufacturer(self):
