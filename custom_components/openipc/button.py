@@ -41,7 +41,9 @@ LEGACY_BUTTON_IDS = {
     f"{prefix}_{label}"
     for prefix in ("record_sd", "record_ha", "record_rtsp", "telegram", "telegram_rtsp")
     for label in ("15s", "30s", "1m", "3m", "5m", "10m")
-} | {"qr_scan_15", "qr_scan_30", "qr_scan_60"}
+} | {"qr_scan_15", "qr_scan_30", "qr_scan_60"} | {
+    f"qr_mode_{mode}" for mode in ("single", "periodic", "continuous", "disabled")
+}
 
 async def async_setup_entry(hass, entry, async_add_entities):
     """Set up OpenIPC buttons."""
@@ -72,10 +74,6 @@ async def async_setup_entry(hass, entry, async_add_entities):
     # QR-код кнопки для всех камер
     entities.extend([
         OpenIPCQRScanButton(coordinator, entry),
-        OpenIPCQRModeButton(coordinator, entry, "single", "Mode Single", "mdi:qrcode-scan"),
-        OpenIPCQRModeButton(coordinator, entry, "periodic", "Mode Periodic", "mdi:qrcode"),
-        OpenIPCQRModeButton(coordinator, entry, "continuous", "Mode Continuous", "mdi:qrcode-edit"),
-        OpenIPCQRModeButton(coordinator, entry, "disabled", "Mode Disabled", "mdi:qrcode-off"),
         OpenIPCQRStopButton(coordinator, entry),
     ])
     
@@ -220,56 +218,6 @@ class OpenIPCQRScanButton(CoordinatorEntity, ButtonEntity):
                     "title": f"📸 QR Scan Activated - {self.entry.data.get('name')}",
                     "message": f"QR scanning enabled for {duration} seconds",
                     "notification_id": f"openipc_qr_scan_{self.entry.entry_id}"
-                }
-            )
-
-    @property
-    def device_info(self):
-        """Return device info."""
-        parsed = self.coordinator.data.get("parsed", {})
-        return {
-            "identifiers": {(DOMAIN, self.entry.entry_id)},
-            "name": self.entry.data.get("name", "OpenIPC Camera"),
-            "manufacturer": "OpenIPC",
-            "model": parsed.get("model", "Camera"),
-        }
-
-
-class OpenIPCQRModeButton(CoordinatorEntity, ButtonEntity):
-    """Button to change QR scanner mode."""
-
-    def __init__(self, coordinator, entry, mode: str, name: str, icon: str):
-        """Initialize the button."""
-        super().__init__(coordinator)
-        self.coordinator = coordinator
-        self.entry = entry
-        self._mode = mode
-        self._attr_name = f"{entry.data.get('name', 'OpenIPC')} QR {name}"
-        self._attr_unique_id = f"{entry.entry_id}_qr_mode_{mode}"
-        self._attr_icon = icon
-        self._attr_entity_category = EntityCategory.CONFIG
-
-    async def async_press(self) -> None:
-        """Handle the button press."""
-        if hasattr(self.coordinator, 'qr_scanner'):
-            from .qr_scanner import QRMode
-            mode_map = {
-                "single": QRMode.SINGLE,
-                "periodic": QRMode.PERIODIC,
-                "continuous": QRMode.CONTINUOUS,
-                "disabled": QRMode.DISABLED
-            }
-            self.coordinator.qr_scanner.mode = mode_map.get(self._mode, QRMode.DISABLED)
-            _LOGGER.info(f"QR mode set to {self._mode} for {self.entry.data.get('name')}")
-            
-            # Показываем уведомление
-            await self.hass.services.async_call(
-                "persistent_notification",
-                "create",
-                {
-                    "title": f"📸 QR Mode Changed - {self.entry.data.get('name')}",
-                    "message": f"Режим QR сканирования изменен на: {self._mode}",
-                    "notification_id": f"openipc_qr_mode_{self.entry.entry_id}"
                 }
             )
 
