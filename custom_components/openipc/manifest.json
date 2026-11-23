@@ -1,6 +1,7 @@
 {
   "domain": "openipc",
   "name": "OpenIPC Camera",
+  "categories": ["security_safety.cameras", "security_safety.doorbells_intercoms"],
   "codeowners": ["@sebfrie"],
   "config_flow": true,
   "dependencies": [
