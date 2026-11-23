@@ -37,8 +37,8 @@ RUN apk add --no-cache \
     openssh-client \
     sshpass
 
-# Create virtual environment
-RUN python3 -m venv /opt/venv
+# Create virtual environment with system site-packages for Alpine py3-* packages
+RUN python3 -m venv --system-site-packages /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
 # Install additional Python packages
