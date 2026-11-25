@@ -145,27 +145,85 @@ class OpenIPCMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
     _attr_icon = "mdi:speaker"
 
     def __init__(self, coordinator, entry):
-        """Initialize the media player."""
+        """Initialize the media player from the camera configuration."""
         super().__init__(coordinator)
         self.coordinator = coordinator
         self.entry = entry
         self._attr_name = f"{entry.data.get(CONF_NAME, 'OpenIPC')} Speaker"
         self._attr_unique_id = f"{entry.entry_id}_speaker"
         self._attr_supported_features = SUPPORT_OPENIPC
-        self._attr_state = MediaPlayerState.IDLE
         self._attr_volume_level = 0.5
         self._attr_media_content_type = "audio/mpeg"
-        
+
+        # Fallback values are used only until the first camera config is available.
         self._is_on = True
+        self._attr_state = MediaPlayerState.IDLE
         self._media_title = None
         self._media_duration = None
         self._media_position = None
         self._media_position_updated_at = None
+        self._sync_from_camera_config()
+
+    def _get_audio_config(self) -> Optional[dict]:
+        """Return the audio section from the latest camera config, if available."""
+        coordinator_data = self.coordinator.data or {}
+        config = coordinator_data.get("config") or {}
+        audio = config.get("audio")
+        return audio if isinstance(audio, dict) else None
+
+    @staticmethod
+    def _config_bool(value) -> bool:
+        """Convert a Majestic config value to bool without treating 'false' as true."""
+        if isinstance(value, str):
+            return value.strip().lower() in ("true", "1", "yes", "on")
+        return bool(value)
+
+    def _configured_is_on(self) -> Optional[bool]:
+        """Return whether both Majestic audio and speaker output are enabled."""
+        audio = self._get_audio_config()
+        if audio is None:
+            return None
+        return (
+            self._config_bool(audio.get("enabled", False))
+            and self._config_bool(audio.get("outputEnabled", False))
+        )
+
+    def _configured_volume(self) -> Optional[float]:
+        """Return speaker volume from Majestic as a Home Assistant 0..1 value."""
+        audio = self._get_audio_config()
+        if audio is None:
+            return None
+        try:
+            volume_percent = float(audio.get("outputVolume", 50))
+        except (TypeError, ValueError):
+            _LOGGER.warning("Invalid Majestic audio.outputVolume; using 50%%")
+            volume_percent = 50.0
+        volume_percent = max(0.0, min(100.0, volume_percent))
+        return volume_percent / 100.0
+
+    def _sync_from_camera_config(self):
+        """Synchronize the entity state and volume with the latest camera config."""
+        configured_is_on = self._configured_is_on()
+        if configured_is_on is not None:
+            self._is_on = configured_is_on
+            self._attr_state = (
+                MediaPlayerState.IDLE if self._is_on else MediaPlayerState.OFF
+            )
+
+        configured_volume = self._configured_volume()
+        if configured_volume is not None:
+            self._attr_volume_level = configured_volume
+
+    def _handle_coordinator_update(self):
+        """Refresh speaker state and volume when the camera config is polled."""
+        self._sync_from_camera_config()
+        super()._handle_coordinator_update()
 
     @property
     def device_info(self) -> DeviceInfo:
         """Return device info."""
-        parsed = self.coordinator.data.get("parsed", {})
+        coordinator_data = self.coordinator.data or {}
+        parsed = coordinator_data.get("parsed", {})
         return DeviceInfo(
             identifiers={(DOMAIN, self.entry.entry_id)},
             name=self.entry.data.get(CONF_NAME, "OpenIPC Camera"),
@@ -175,7 +233,7 @@ class OpenIPCMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
 
     @property
     def is_on(self) -> bool:
-        """Return true if device is on."""
+        """Return the last confirmed speaker state."""
         return self._is_on
 
     @property
@@ -199,13 +257,39 @@ class OpenIPCMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         return self._media_position_updated_at
 
     async def async_turn_on(self):
-        """Turn the media player on."""
+        """Enable Majestic audio and its speaker output."""
+        audio = self._get_audio_config() or {}
+
+        # Majestic requires audio.enabled as well as audio.outputEnabled
+        # for speaker output to work. Keep the input subsystem enabled on turn-off.
+        if not self._config_bool(audio.get("enabled", False)):
+            success = await self.coordinator.async_send_command(
+                "/api/v1/set", "audio.enabled=true"
+            )
+            if not success:
+                _LOGGER.error("Failed to enable Majestic audio subsystem on %s", self.coordinator.host)
+                return
+
+        success = await self.coordinator.async_send_command(
+            "/api/v1/set", "audio.outputEnabled=true"
+        )
+        if not success:
+            _LOGGER.error("Failed to enable OpenIPC speaker output on %s", self.coordinator.host)
+            return
+
         self._is_on = True
         self._attr_state = MediaPlayerState.IDLE
         self.async_write_ha_state()
 
     async def async_turn_off(self):
-        """Turn the media player off."""
+        """Disable only the speaker output, leaving microphone audio enabled."""
+        success = await self.coordinator.async_send_command(
+            "/api/v1/set", "audio.outputEnabled=false"
+        )
+        if not success:
+            _LOGGER.error("Failed to disable OpenIPC speaker output on %s", self.coordinator.host)
+            return
+
         self._is_on = False
         self._attr_state = MediaPlayerState.OFF
         self.async_write_ha_state()
@@ -213,66 +297,66 @@ class OpenIPCMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
     async def async_play_media(self, media_type: str, media_id: str, **kwargs):
         """Play media (TTS or audio file)."""
         _LOGGER.info(f"OpenIPC play_media: type={media_type}, id={media_id}, kwargs={kwargs}")
-        
+
         if not self._is_on:
             await self.async_turn_on()
-        
+            if not self._is_on:
+                _LOGGER.error("Cannot play media because the OpenIPC speaker could not be enabled")
+                return
+
         self._attr_state = MediaPlayerState.PLAYING
-        
-        # Определяем язык из kwargs или параметров
+
+        # Determine language and provider from kwargs or extra parameters.
         extra = kwargs.get("extra") or {}
         language = kwargs.get("language") or extra.get("language", "ru")
         provider = kwargs.get("provider") or extra.get("provider")
-        
+
         if media_type == "tts":
             self._media_title = f"TTS: {media_id[:50]}"
         else:
             self._media_title = media_id
-            
+
         self.async_write_ha_state()
-        
+
         try:
-            # Используем addon
             camera_ip = self.entry.data.get(CONF_HOST)
-            _LOGGER.info(f"Using addon for TTS to {camera_ip}")
-            
-            # Прямой HTTP запрос к аддону
+            _LOGGER.info("Using addon for TTS to %s", camera_ip)
+
             url = f"{ADDON_URL}/api/tts"
             payload = {
                 "camera_id": camera_ip,
                 "text": media_id,
-                "lang": language
+                "lang": language,
             }
             if provider:
                 payload["provider"] = provider
-            
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=payload, timeout=10) as response:
                     if response.status == 200:
                         data = await response.json()
                         if data.get("success"):
-                            _LOGGER.info("✅ TTS sent via addon")
+                            _LOGGER.info("TTS sent via addon")
                         else:
-                            _LOGGER.error(f"❌ TTS via addon failed: {data}")
-                            # Просто логируем ошибку, без fallback
+                            _LOGGER.error("TTS via addon failed: %s", data)
                     else:
-                        _LOGGER.error(f"❌ HTTP {response.status}")
-                        
+                        _LOGGER.error("TTS addon returned HTTP %s", response.status)
+
         except Exception as err:
-            _LOGGER.error(f"TTS error: {err}")
-        
-        # Устанавливаем примерную длительность (1 секунда на 10 символов)
+            _LOGGER.error("TTS error: %s", err)
+
+        # Estimate duration (approximately one second per ten characters).
         self._media_duration = max(5, len(media_id) // 10)
         self._media_position = 0
         self._media_position_updated_at = dt_util.utcnow()
-        
+
         self._attr_state = MediaPlayerState.IDLE
         self.async_write_ha_state()
 
     async def async_stop(self):
         """Stop playback."""
         _LOGGER.info("OpenIPC stop")
-        self._attr_state = MediaPlayerState.IDLE
+        self._attr_state = MediaPlayerState.IDLE if self._is_on else MediaPlayerState.OFF
         self._media_title = None
         self._media_duration = None
         self._media_position = None
@@ -280,9 +364,20 @@ class OpenIPCMediaPlayer(CoordinatorEntity, MediaPlayerEntity):
         self.async_write_ha_state()
 
     async def async_set_volume_level(self, volume: float):
-        """Set volume level."""
-        _LOGGER.info(f"OpenIPC set volume: {volume}")
-        self._attr_volume_level = volume
+        """Set speaker volume on the camera."""
+        volume = max(0.0, min(1.0, float(volume)))
+        volume_percent = round(volume * 100)
+        _LOGGER.info("Setting OpenIPC speaker volume to %s%%", volume_percent)
+
+        success = await self.coordinator.async_send_command(
+            "/api/v1/set", f"audio.outputVolume={volume_percent}"
+        )
+        if not success:
+            _LOGGER.error("Failed to set OpenIPC speaker volume to %s%%", volume_percent)
+            return
+
+        # Reflect the exact integer percentage sent to Majestic.
+        self._attr_volume_level = volume_percent / 100.0
         self.async_write_ha_state()
 
     async def async_volume_up(self):
